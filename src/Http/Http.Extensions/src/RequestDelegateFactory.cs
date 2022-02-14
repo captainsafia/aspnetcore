@@ -39,6 +39,9 @@ public static partial class RequestDelegateFactory
     private static readonly MethodInfo ResultWriteResponseAsyncMethod = typeof(RequestDelegateFactory).GetMethod(nameof(ExecuteResultWriteResponse), BindingFlags.NonPublic | BindingFlags.Static)!;
     private static readonly MethodInfo StringResultWriteResponseAsyncMethod = typeof(RequestDelegateFactory).GetMethod(nameof(ExecuteWriteStringResponseAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
     private static readonly MethodInfo StringIsNullOrEmptyMethod = typeof(string).GetMethod(nameof(string.IsNullOrEmpty), BindingFlags.Static | BindingFlags.Public)!;
+    private static readonly MethodInfo ConsoleWriteLineMethod = typeof(RequestDelegateFactory).GetMethod(nameof(ConsoleWriteLine), BindingFlags.NonPublic | BindingFlags.Static)!;
+    private static readonly MethodInfo ConsoleWriteIntMethod = typeof(RequestDelegateFactory).GetMethod(nameof(ConsoleWriteInt), BindingFlags.NonPublic | BindingFlags.Static)!;
+    private static readonly MethodInfo WrapObjectAsTaskMethod = typeof(RequestDelegateFactory).GetMethod(nameof(WrapObjectAsValueTask), BindingFlags.NonPublic | BindingFlags.Static)!;
 
     // Call WriteAsJsonAsync<object?>() to serialize the runtime return type rather than the declared return type.
     // https://docs.microsoft.com/en-us/dotnet/standard/serialization/system-text-json-polymorphism
@@ -77,6 +80,8 @@ public static partial class RequestDelegateFactory
     private static readonly BinaryExpression TempSourceStringNullExpr = Expression.Equal(TempSourceStringExpr, Expression.Constant(null));
     private static readonly UnaryExpression TempSourceStringIsNotNullOrEmptyExpr = Expression.Not(Expression.Call(StringIsNullOrEmptyMethod, TempSourceStringExpr));
 
+    private static readonly ConstructorInfo EndpointFilterContextConstructor = typeof(EndpointFilterContext).GetConstructors().Single();
+
     private static readonly string[] DefaultAcceptsContentType = new[] { "application/json" };
     private static readonly string[] FormFileContentType = new[] { "multipart/form-data" };
 
@@ -85,9 +90,10 @@ public static partial class RequestDelegateFactory
     /// </summary>
     /// <param name="handler">A request handler with any number of custom parameters that often produces a response with its return value.</param>
     /// <param name="options">The <see cref="RequestDelegateFactoryOptions"/> used to configure the behavior of the handler.</param>
+    /// <param name="filters">The <see cref="RequestDelegateFactoryOptions"/> used to configure the behavior of the handler.</param>
     /// <returns>The <see cref="RequestDelegateResult"/>.</returns>
 #pragma warning disable RS0026 // Do not add multiple public overloads with optional parameters
-    public static RequestDelegateResult Create(Delegate handler, RequestDelegateFactoryOptions? options = null)
+    public static RequestDelegateResult Create(Delegate handler, RequestDelegateFactoryOptions? options = null, IEnumerable<IEndpointFilter>? filters = null)
 #pragma warning restore RS0026 // Do not add multiple public overloads with optional parameters
     {
         if (handler is null)
@@ -102,6 +108,7 @@ public static partial class RequestDelegateFactory
         };
 
         var factoryContext = CreateFactoryContext(options);
+        factoryContext.Filters = (filters ?? Array.Empty<IEndpointFilter>()).ToArray();
         var targetableRequestDelegate = CreateTargetableRequestDelegate(handler.Method, targetExpression, factoryContext);
 
         return new RequestDelegateResult(httpContext => targetableRequestDelegate(handler.Target, httpContext), factoryContext.Metadata);
@@ -176,6 +183,16 @@ public static partial class RequestDelegateFactory
         // }
 
         var arguments = CreateArguments(methodInfo.GetParameters(), factoryContext);
+
+        if (factoryContext.Filters.Count() > 0)
+        {
+            var filterInvocation = CreateFilterInvocation(factoryContext, methodInfo, targetExpression, arguments);
+            if (factoryContext.UsingTempSourceString)
+            {
+                filterInvocation = Expression.Block(new[] { TempSourceStringExpr }, filterInvocation);
+            }
+            return HandleRequestBodyAndCompileRequestDelegate(filterInvocation, factoryContext);
+        }
 
         var responseWritingMethodCall = factoryContext.ParamCheckExpressions.Count > 0 ?
             CreateParamCheckingResponseWritingMethodCall(methodInfo, targetExpression, arguments, factoryContext) :
@@ -385,6 +402,116 @@ public static partial class RequestDelegateFactory
     {
         var callMethod = CreateMethodCall(methodInfo, target, arguments);
         return AddResponseWritingToMethodCall(callMethod, methodInfo.ReturnType);
+    }
+
+    private static Expression CreateFilterInvocation(FactoryContext factoryContext, MethodInfo methodInfo, Expression? target, Expression[] arguments)
+    {
+        var ex = Expression.Parameter(typeof(Exception));
+        var logExceptionMethod = typeof(RequestDelegateFactory).GetMethod("LogException", BindingFlags.Static | BindingFlags.NonPublic);
+
+        var localVariables = new ParameterExpression[factoryContext.ExtraLocals.Count + 1];
+        var checkParamAndCallMethod = new Expression[factoryContext.ParamCheckExpressions.Count];
+
+        for (var i = 0; i < factoryContext.ExtraLocals.Count; i++)
+        {
+            localVariables[i] = factoryContext.ExtraLocals[i];
+        }
+
+        for (var i = 0; i < factoryContext.ParamCheckExpressions.Count; i++)
+        {
+            checkParamAndCallMethod[i] = factoryContext.ParamCheckExpressions[i];
+        }
+
+        localVariables[factoryContext.ExtraLocals.Count] = WasParamCheckFailureExpr;
+
+        var filtersVariable = Expression.Variable(typeof(IEndpointFilter[]), "filters");
+        var filtersAssign = Expression.Assign(filtersVariable, Expression.Constant(factoryContext.Filters));
+        // var filterContext = new EndpointFilterContext(httpContext, arguments, from, method, handler);
+        var filterContextVariable = Expression.Parameter(typeof(EndpointFilterContext), "filterContext");
+        var argsParam = Expression.NewArrayInit(typeof(object), arguments);
+        var filterContextArgs = new List<Expression>() { HttpContextExpr, argsParam };
+        var newEndpointFilterContextExpression = Expression.Assign(
+            filterContextVariable,
+            Expression.New(EndpointFilterContextConstructor, filterContextArgs)
+        );
+        // var invokeNext = (context, nextFilter) => handler(arguments, from, method, handler);
+        // var callMethod = Expression.Call(methodInfo, arguments);
+        var contextParam = Expression.Variable(typeof(EndpointFilterContext), "context");
+        var callMethod = Expression.Call(methodInfo, Expression.Convert(Expression.Property(Expression.Property(contextParam, typeof(EndpointFilterContext).GetProperty(nameof(EndpointFilterContext.Parameters))), "Item", Expression.Constant(0)), typeof(string)));
+        var invocationWithFiltersVariable = Expression.Variable(typeof(Func<EndpointFilterContext, ValueTask<object?>>), "invocationWithFilters");
+        var primaryInvokeNextBody = Expression.Lambda<Func<EndpointFilterContext, ValueTask<object?>>>(
+                Expression.Call(WrapObjectAsTaskMethod, callMethod),
+                contextParam
+            );
+        var primaryInvokeNext = Expression.Assign(
+            invocationWithFiltersVariable,
+            primaryInvokeNextBody
+        );
+        // var count = filters.Length;
+        // for (var i = count - 1; i > -1; i--)
+        // {
+        //     var currentFilter = filters[i];
+        //     var nextFilter = invokeNext;
+        //     invokeNext = (context) => currentFilter(context, nextFilter);
+        // }
+        var @break = Expression.Label();
+        var index = Expression.Variable(typeof(int), "index");
+        var count = Expression.Variable(typeof(int), "count");
+        var countAssignment = Expression.Assign(count, Expression.ArrayLength(filtersVariable));
+        var indexAssignment = Expression.Assign(index, Expression.Subtract(count, Expression.Constant(1)));
+        var currentFilterVariable = Expression.Variable(typeof(IEndpointFilter), "currentFilter");
+        var nextFilterVariable = Expression.Variable(typeof(Func<EndpointFilterContext, ValueTask<object?>>), "nextFilter");
+        Expression decrementIndex = Expression.Assign(index, Expression.Subtract(index, Expression.Constant(1)));
+        var loopBody = Expression.Block(
+            new[] { nextFilterVariable, currentFilterVariable },
+            Expression.IfThenElse(
+                Expression.LessThan(index, Expression.Constant(0)),
+                Expression.Break(@break),
+                Expression.Block(
+                Expression.Call(ConsoleWriteIntMethod, index),
+                Expression.Assign(
+                    currentFilterVariable,
+                    Expression.ArrayAccess(filtersVariable, index)
+                ),
+                Expression.Call(ConsoleWriteLineMethod, Expression.Call(currentFilterVariable, typeof(object).GetMethod("ToString"))),
+                // Expression.Call(ConsoleWriteLineMethod, Expression.Call(invocationWithFiltersVariable, typeof(object).GetMethod("ToString"))),
+                Expression.Assign(
+            nextFilterVariable,
+            invocationWithFiltersVariable
+        ),
+                Expression.Call(ConsoleWriteLineMethod, Expression.Call(nextFilterVariable, typeof(object).GetMethod("ToString"))),
+                Expression.Assign(
+            invocationWithFiltersVariable,
+             Expression.Lambda(
+                Expression.Call(currentFilterVariable, typeof(IEndpointFilter).GetMethod("RunAsync")!, contextParam, nextFilterVariable),
+                contextParam)
+        ),
+                decrementIndex)
+           )
+        );
+        var loop = Expression.Loop(
+          loopBody,
+          @break
+        );
+        var callRequest = Expression.Invoke(invocationWithFiltersVariable, filterContextVariable);
+        var foo = Expression.Block(
+            localVariables.Concat(new[] { filtersVariable, filterContextVariable, index, count, invocationWithFiltersVariable }).ToArray(),
+            checkParamAndCallMethod.Concat(new Expression[] {
+            filtersAssign,
+            newEndpointFilterContextExpression,
+            primaryInvokeNext,
+            countAssignment,
+            indexAssignment,
+            loop,
+            AddResponseWritingToMethodCall(callRequest, typeof(ValueTask<object>)) }).ToArray()
+        );
+        // return Expression.TryCatch(foo, Expression.Catch(ex, Expression.Block(typeof(ValueTask<object>), Expression.Call(logExceptionMethod!, ex), Expression.New(typeof(ValueTask<object>)))));
+        return foo;
+    }
+
+    private static ValueTask<object?> WrapObjectAsValueTask(object? obj)
+    {
+        return ValueTask.FromResult<object?>(obj);
     }
 
     // If we're calling TryParse or validating parameter optionality and
@@ -602,8 +729,10 @@ public static partial class RequestDelegateFactory
                 };
             }
 
-            return Expression.Lambda<Func<object?, HttpContext, Task>>(
-                responseWritingMethodCall, TargetExpr, HttpContextExpr).Compile();
+            var bar = Expression.Lambda<Func<object?, HttpContext, Task>>(
+                responseWritingMethodCall, TargetExpr, HttpContextExpr);
+            return bar.Compile();
+
         }
 
         if (factoryContext.ReadForm)
@@ -614,6 +743,22 @@ public static partial class RequestDelegateFactory
         {
             return HandleRequestBodyAndCompileRequestDelegateForJson(responseWritingMethodCall, factoryContext);
         }
+    }
+
+    static void ConsoleWriteLine(string e)
+    {
+        Console.WriteLine(e);
+    }
+
+    static void ConsoleWriteInt(int i)
+    {
+        Console.WriteLine(i);
+    }
+
+    static void LogException(Exception e)
+    {
+        Console.WriteLine(e.Message + "\n" + e.StackTrace);
+        throw e;
     }
 
     private static Func<object?, HttpContext, Task> HandleRequestBodyAndCompileRequestDelegateForJson(Expression responseWritingMethodCall, FactoryContext factoryContext)
@@ -1574,6 +1719,8 @@ public static partial class RequestDelegateFactory
         // Options
         public IServiceProviderIsService? ServiceProviderIsService { get; init; }
         public List<string>? RouteParameters { get; init; }
+
+        public IEndpointFilter[] Filters { get; set; }
         public bool ThrowOnBadRequest { get; init; }
         public bool DisableInferredFromBody { get; init; }
 

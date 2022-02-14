@@ -1,0 +1,38 @@
+using System.Runtime.InteropServices;
+
+app.MapGet("/foo", (int param1, string param2))
+
+Task Invoke(HttpContext httpContext)
+{
+    int param1 = httpContext.RouteValues["param1"] ?? httpContext.QueryValues["param1"];
+    int param2 = httpContext.RouteValues["param2"] ?? httpContext.QueryValues["param2"];
+
+    var context = new EndpointFiterContext(httpContext, param1, param2);
+    var invokeNext = (context, nextFilter) => handler(context.Parameters);
+
+    for (var i = count - 1; i > -1; i--)
+    {
+        var resolvedFilter = filter[i];
+        var nextFilter = invokeNext;
+        invokeNext = (context) => resolvedFilter(context, nextFilter);
+    }
+
+    // Parameter checking happens here
+    ExecuteTask(handler(param1, param2), httpContext);
+}
+
+Task<object> Filter1(EndpointFiterContext context, Func<EndpointFiterContext, Task<object> next)
+{
+    context.Parameters.Set("param1", 4);
+    await next(contxt, next);
+    return;
+}
+
+Task<object> Filter2(EndpointFiterContext context, Func<EndpointFiterContext, Task<object> next)
+{
+    if (context.Parameters.Get("param1") == 3)
+    {
+        await next(context, next);
+    }
+    return;
+}
