@@ -59,6 +59,12 @@ public static partial class RequestDelegateFactory
     private static readonly ParameterExpression WasParamCheckFailureExpr = Expression.Variable(typeof(bool), "wasParamCheckFailure");
     private static readonly ParameterExpression BoundValuesArrayExpr = Expression.Parameter(typeof(object[]), "boundValues");
 
+    // Endpoint filter-related expressions
+    private static readonly ParameterExpression FilterContextExpr = Expression.Parameter(typeof(EndpointFilterContext), "context");
+    private static readonly MemberExpression FilterFilterContextExpretersExpr = Expression.Property(FilterContextExpr, typeof(EndpointFilterContext).GetProperty(nameof(EndpointFilterContext.Parameters)));
+    private static readonly ParameterExpression InvocationWithFiltersExpr = Expression.Parameter(typeof(Func<EndpointFilterContext, ValueTask<object?>>), "invocationWithFilters");
+    private static readonly ParameterExpression InvokedFilterContextExpr = Expression.Parameter(typeof(EndpointFilterContext), "filterContext");
+
     private static readonly ParameterExpression HttpContextExpr = ParameterBindingMethodCache.HttpContextExpr;
     private static readonly MemberExpression RequestServicesExpr = Expression.Property(HttpContextExpr, typeof(HttpContext).GetProperty(nameof(HttpContext.RequestServices))!);
     private static readonly MemberExpression HttpRequestExpr = Expression.Property(HttpContextExpr, typeof(HttpContext).GetProperty(nameof(HttpContext.Request))!);
@@ -183,20 +189,18 @@ public static partial class RequestDelegateFactory
         // }
 
         var arguments = CreateArguments(methodInfo.GetParameters(), factoryContext);
+        var returnType = methodInfo.ReturnType;
+        factoryContext.MethodCall = CreateMethodCall(methodInfo, targetExpression, arguments);
 
-        if (factoryContext.Filters.Count() > 0)
+        if (factoryContext.Filters.Length > 0)
         {
-            var filterInvocation = CreateFilterInvocation(factoryContext, methodInfo, targetExpression, arguments);
-            if (factoryContext.UsingTempSourceString)
-            {
-                filterInvocation = Expression.Block(new[] { TempSourceStringExpr }, filterInvocation);
-            }
-            return HandleRequestBodyAndCompileRequestDelegate(filterInvocation, factoryContext);
+            factoryContext.FilterInvocation = CreateFilterInvocation(factoryContext, methodInfo, targetExpression, arguments);
+            returnType = typeof(ValueTask<object>);
         }
 
         var responseWritingMethodCall = factoryContext.ParamCheckExpressions.Count > 0 ?
-            CreateParamCheckingResponseWritingMethodCall(methodInfo, targetExpression, arguments, factoryContext) :
-            CreateResponseWritingMethodCall(methodInfo, targetExpression, arguments);
+            CreateParamCheckingResponseWritingMethodCall(returnType, targetExpression, arguments, factoryContext) :
+            AddResponseWritingToMethodCall(factoryContext.MethodCall, returnType);
 
         if (factoryContext.UsingTempSourceString)
         {
@@ -218,6 +222,11 @@ public static partial class RequestDelegateFactory
         for (var i = 0; i < parameters.Length; i++)
         {
             args[i] = CreateArgument(parameters[i], factoryContext);
+            factoryContext.ContextArgAccess.Add(
+                Expression.Convert(
+                    Expression.Property(FilterFilterContextExpretersExpr, "Item", Expression.Constant(i)),
+                parameters[i].ParameterType));
+            factoryContext.BoxedArgs.Add(Expression.Convert(args[i], typeof(object)));
         }
 
         if (factoryContext.HasInferredBody && factoryContext.DisableInferredFromBody)
@@ -406,107 +415,74 @@ public static partial class RequestDelegateFactory
 
     private static Expression CreateFilterInvocation(FactoryContext factoryContext, MethodInfo methodInfo, Expression? target, Expression[] arguments)
     {
-        var ex = Expression.Parameter(typeof(Exception));
-        var logExceptionMethod = typeof(RequestDelegateFactory).GetMethod("LogException", BindingFlags.Static | BindingFlags.NonPublic);
-
-        var localVariables = new ParameterExpression[factoryContext.ExtraLocals.Count + 1];
-        var checkParamAndCallMethod = new Expression[factoryContext.ParamCheckExpressions.Count];
-
-        for (var i = 0; i < factoryContext.ExtraLocals.Count; i++)
-        {
-            localVariables[i] = factoryContext.ExtraLocals[i];
-        }
-
-        for (var i = 0; i < factoryContext.ParamCheckExpressions.Count; i++)
-        {
-            checkParamAndCallMethod[i] = factoryContext.ParamCheckExpressions[i];
-        }
-
-        localVariables[factoryContext.ExtraLocals.Count] = WasParamCheckFailureExpr;
-
-        var filtersVariable = Expression.Variable(typeof(IEndpointFilter[]), "filters");
-        var filtersAssign = Expression.Assign(filtersVariable, Expression.Constant(factoryContext.Filters));
-        // var filterContext = new EndpointFilterContext(httpContext, arguments, from, method, handler);
-        var filterContextVariable = Expression.Parameter(typeof(EndpointFilterContext), "filterContext");
-        var argsParam = Expression.NewArrayInit(typeof(object), arguments);
-        var filterContextArgs = new List<Expression>() { HttpContextExpr, argsParam };
-        var newEndpointFilterContextExpression = Expression.Assign(
-            filterContextVariable,
-            Expression.New(EndpointFilterContextConstructor, filterContextArgs)
-        );
-        // var invokeNext = (context, nextFilter) => handler(arguments, from, method, handler);
-        // var callMethod = Expression.Call(methodInfo, arguments);
-        var contextParam = Expression.Variable(typeof(EndpointFilterContext), "context");
-        var callMethod = Expression.Call(methodInfo, Expression.Convert(Expression.Property(Expression.Property(contextParam, typeof(EndpointFilterContext).GetProperty(nameof(EndpointFilterContext.Parameters))), "Item", Expression.Constant(0)), typeof(string)));
-        var invocationWithFiltersVariable = Expression.Variable(typeof(Func<EndpointFilterContext, ValueTask<object?>>), "invocationWithFilters");
-        var primaryInvokeNextBody = Expression.Lambda<Func<EndpointFilterContext, ValueTask<object?>>>(
-                Expression.Call(WrapObjectAsTaskMethod, callMethod),
-                contextParam
-            );
-        var primaryInvokeNext = Expression.Assign(
-            invocationWithFiltersVariable,
-            primaryInvokeNextBody
-        );
-        // var count = filters.Length;
-        // for (var i = count - 1; i > -1; i--)
-        // {
-        //     var currentFilter = filters[i];
-        //     var nextFilter = invokeNext;
-        //     invokeNext = (context) => currentFilter(context, nextFilter);
-        // }
+        var filtersVariable = Expression.Parameter(typeof(IEndpointFilter[]), "filters");
+        // var filterContextVariable = Expression.Parameter(typeof(EndpointFilterContext), "filterContext");
         var @break = Expression.Label();
-        var index = Expression.Variable(typeof(int), "index");
-        var count = Expression.Variable(typeof(int), "count");
-        var countAssignment = Expression.Assign(count, Expression.ArrayLength(filtersVariable));
-        var indexAssignment = Expression.Assign(index, Expression.Subtract(count, Expression.Constant(1)));
-        var currentFilterVariable = Expression.Variable(typeof(IEndpointFilter), "currentFilter");
-        var nextFilterVariable = Expression.Variable(typeof(Func<EndpointFilterContext, ValueTask<object?>>), "nextFilter");
-        Expression decrementIndex = Expression.Assign(index, Expression.Subtract(index, Expression.Constant(1)));
-        var loopBody = Expression.Block(
+        var index = Expression.Parameter(typeof(int), "index");
+        var currentFilterVariable = Expression.Parameter(typeof(IEndpointFilter), "currentFilter");
+        var nextFilterVariable = Expression.Parameter(typeof(Func<EndpointFilterContext, ValueTask<object?>>), "nextFilter");
+        var filterInvocationConstructionLoop = Expression.Loop(
+          Expression.Block(
             new[] { nextFilterVariable, currentFilterVariable },
             Expression.IfThenElse(
                 Expression.LessThan(index, Expression.Constant(0)),
                 Expression.Break(@break),
                 Expression.Block(
-                Expression.Call(ConsoleWriteIntMethod, index),
+                    Expression.Call(ConsoleWriteLineMethod, Expression.Constant("G")),
                 Expression.Assign(
                     currentFilterVariable,
                     Expression.ArrayAccess(filtersVariable, index)
                 ),
-                Expression.Call(ConsoleWriteLineMethod, Expression.Call(currentFilterVariable, typeof(object).GetMethod("ToString"))),
-                // Expression.Call(ConsoleWriteLineMethod, Expression.Call(invocationWithFiltersVariable, typeof(object).GetMethod("ToString"))),
+                Expression.Call(ConsoleWriteLineMethod, Expression.Constant("H")),
                 Expression.Assign(
             nextFilterVariable,
-            invocationWithFiltersVariable
+            InvocationWithFiltersExpr
         ),
-                Expression.Call(ConsoleWriteLineMethod, Expression.Call(nextFilterVariable, typeof(object).GetMethod("ToString"))),
+                Expression.Call(ConsoleWriteLineMethod, Expression.Constant("I")),
                 Expression.Assign(
-            invocationWithFiltersVariable,
+            InvocationWithFiltersExpr,
              Expression.Lambda(
-                Expression.Call(currentFilterVariable, typeof(IEndpointFilter).GetMethod("RunAsync")!, contextParam, nextFilterVariable),
-                contextParam)
+                Expression.Call(currentFilterVariable, typeof(IEndpointFilter).GetMethod("RunAsync")!, FilterContextExpr, nextFilterVariable),
+                FilterContextExpr)
         ),
-                decrementIndex)
+                Expression.Call(ConsoleWriteLineMethod, Expression.Constant("I")),
+                Expression.PostDecrementAssign(index),
+                Expression.Call(ConsoleWriteLineMethod, Expression.Constant("J")))
            )
-        );
-        var loop = Expression.Loop(
-          loopBody,
+        ),
           @break
         );
-        var callRequest = Expression.Invoke(invocationWithFiltersVariable, filterContextVariable);
-        var foo = Expression.Block(
-            localVariables.Concat(new[] { filtersVariable, filterContextVariable, index, count, invocationWithFiltersVariable }).ToArray(),
-            checkParamAndCallMethod.Concat(new Expression[] {
-            filtersAssign,
-            newEndpointFilterContextExpression,
-            primaryInvokeNext,
-            countAssignment,
-            indexAssignment,
-            loop,
-            AddResponseWritingToMethodCall(callRequest, typeof(ValueTask<object>)) }).ToArray()
+        factoryContext.MethodCall = Expression.Invoke(InvocationWithFiltersExpr, InvokedFilterContextExpr);
+        return Expression.Block(
+            new[] { filtersVariable, InvokedFilterContextExpr, index, InvocationWithFiltersExpr },
+            Expression.Call(ConsoleWriteLineMethod, Expression.Constant("A")),
+            Expression.Assign(filtersVariable, Expression.Constant(factoryContext.Filters)),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Constant("B")),
+            Expression.Assign(
+            InvokedFilterContextExpr,
+            Expression.New(EndpointFilterContextConstructor, new Expression[] { HttpContextExpr, Expression.NewArrayInit(typeof(object), factoryContext.BoxedArgs) })),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Constant("C")),
+            Expression.Assign(
+            InvocationWithFiltersExpr,
+            Expression.Lambda<Func<EndpointFilterContext, ValueTask<object?>>>(
+                Expression.Call(WrapObjectAsTaskMethod, Expression.Call(target, methodInfo, factoryContext.ContextArgAccess)),
+                FilterContextExpr
+            )
+        ),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Constant("D")),
+            Expression.Call(ConsoleWriteIntMethod, Expression.ArrayLength(filtersVariable)),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Constant("E")),
+            Expression.Assign(index, Expression.Subtract(Expression.ArrayLength(filtersVariable), Expression.Constant(1))),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Constant("F")),
+
+            filterInvocationConstructionLoop,
+            Expression.Call(ConsoleWriteLineMethod, Expression.Call(factoryContext.MethodCall, typeof(object).GetMethod("ToString"))),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Constant("K")),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Call(HttpContextExpr, typeof(object).GetMethod("ToString"))),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Constant("L")),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Call(TargetExpr, typeof(object).GetMethod("ToString"))),
+            Expression.Call(ConsoleWriteLineMethod, Expression.Constant("M"))
         );
-        // return Expression.TryCatch(foo, Expression.Catch(ex, Expression.Block(typeof(ValueTask<object>), Expression.Call(logExceptionMethod!, ex), Expression.New(typeof(ValueTask<object>)))));
-        return foo;
     }
 
     private static ValueTask<object?> WrapObjectAsValueTask(object? obj)
@@ -517,29 +493,9 @@ public static partial class RequestDelegateFactory
     // If we're calling TryParse or validating parameter optionality and
     // wasParamCheckFailure indicates it failed, set a 400 StatusCode instead of calling the method.
     private static Expression CreateParamCheckingResponseWritingMethodCall(
-        MethodInfo methodInfo, Expression? target, Expression[] arguments, FactoryContext factoryContext)
+        Type returnType, Expression? target, Expression[] arguments, FactoryContext factoryContext)
     {
-        // {
-        //     string tempSourceString;
-        //     bool wasParamCheckFailure = false;
-        //
-        //     // Assume "int param1" is the first parameter, "[FromRoute] int? param2 = 42" is the second parameter ...
-        //     int param1_local;
-        //     int? param2_local;
-        //     // ...
-        //
-        //     tempSourceString = httpContext.RouteValue["param1"] ?? httpContext.Query["param1"];
-        //
-        //     if (tempSourceString != null)
-        //     {
-        //         if (!int.TryParse(tempSourceString, out param1_local))
-        //         {
-        //             wasParamCheckFailure = true;
-        //             Log.ParameterBindingFailed(httpContext, "Int32", "id", tempSourceString)
-        //         }
-        //     }
-        //
-        //     tempSourceString = httpContext.RouteValue["param2"];
+
         //     // ...
         //
         //     return wasParamCheckFailure ?
@@ -550,10 +506,10 @@ public static partial class RequestDelegateFactory
         //         {
         //             // Logic generated by AddResponseWritingToMethodCall() that calls handler(param1_local, param2_local, ...)
         //         };
-        // }
+        // 
 
-        var localVariables = new ParameterExpression[factoryContext.ExtraLocals.Count + 1];
-        var checkParamAndCallMethod = new Expression[factoryContext.ParamCheckExpressions.Count + 1];
+        var localVariables = new ParameterExpression[factoryContext.ExtraLocals.Count + 4];
+        var checkParamAndCallMethod = new Expression[factoryContext.ParamCheckExpressions.Count + 2];
 
         for (var i = 0; i < factoryContext.ExtraLocals.Count; i++)
         {
@@ -566,18 +522,20 @@ public static partial class RequestDelegateFactory
         }
 
         localVariables[factoryContext.ExtraLocals.Count] = WasParamCheckFailureExpr;
+        localVariables[factoryContext.ExtraLocals.Count + 3] = TargetExpr;
+        localVariables[factoryContext.ExtraLocals.Count + 2] = InvocationWithFiltersExpr;
+        localVariables[factoryContext.ExtraLocals.Count + 1] = InvokedFilterContextExpr;
 
         var set400StatusAndReturnCompletedTask = Expression.Block(
                 Expression.Assign(StatusCodeExpr, Expression.Constant(400)),
                 CompletedTaskExpr);
 
-        var methodCall = CreateMethodCall(methodInfo, target, arguments);
-
         var checkWasParamCheckFailure = Expression.Condition(WasParamCheckFailureExpr,
             set400StatusAndReturnCompletedTask,
-            AddResponseWritingToMethodCall(methodCall, methodInfo.ReturnType));
+            AddResponseWritingToMethodCall(factoryContext.MethodCall, returnType));
 
-        checkParamAndCallMethod[factoryContext.ParamCheckExpressions.Count] = checkWasParamCheckFailure;
+        checkParamAndCallMethod[factoryContext.ParamCheckExpressions.Count] = factoryContext.FilterInvocation;
+        checkParamAndCallMethod[factoryContext.ParamCheckExpressions.Count + 1] = checkWasParamCheckFailure;
 
         return Expression.Block(localVariables, checkParamAndCallMethod);
     }
@@ -728,11 +686,10 @@ public static partial class RequestDelegateFactory
                     await continuation(target, httpContext, boundValues);
                 };
             }
-
             var bar = Expression.Lambda<Func<object?, HttpContext, Task>>(
                 responseWritingMethodCall, TargetExpr, HttpContextExpr);
-            return bar.Compile();
 
+            return bar.Compile();
         }
 
         if (factoryContext.ReadForm)
@@ -1719,8 +1676,6 @@ public static partial class RequestDelegateFactory
         // Options
         public IServiceProviderIsService? ServiceProviderIsService { get; init; }
         public List<string>? RouteParameters { get; init; }
-
-        public IEndpointFilter[] Filters { get; set; }
         public bool ThrowOnBadRequest { get; init; }
         public bool DisableInferredFromBody { get; init; }
 
@@ -1743,6 +1698,13 @@ public static partial class RequestDelegateFactory
 
         public bool ReadForm { get; set; }
         public ParameterInfo? FirstFormRequestBodyParameter { get; set; }
+
+        // Endpoint filter-related state
+        public IEndpointFilter[] Filters { get; set; }
+        public List<Expression> ContextArgAccess { get; } = new();
+        public List<Expression> BoxedArgs { get; } = new();
+        public Expression FilterInvocation { get; set; }
+        public Expression MethodCall { get; set; }
     }
 
     private static class RequestDelegateFactoryConstants

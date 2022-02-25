@@ -44,7 +44,8 @@ public partial class RequestDelegateFactoryTests : LoggedTest
     public async Task RequestDelegateFactory_CanInvokeSingleEndpointFilter_ThatModifiesArguments()
     {
         // Arrange
-       string HelloName(string name) {
+       string HelloName(string name)
+       {
             Console.WriteLine(name);
             return $"Hello, {name}!";
        };
@@ -70,13 +71,12 @@ public partial class RequestDelegateFactoryTests : LoggedTest
     }
 
     [Fact]
-    public async Task RequestDelegateFactory_CanInvokeMultipleEndpointFilters_ThatModifyArguments()
+    public async Task RequestDelegateFactory_CanInvokeMultipleEndpointFilters_ThatModifyDifferentArguments()
     {
         // Arrange
-        string HelloName(string name)
+        string HelloName(string name, int age)
         {
-            Console.WriteLine(name);
-            return $"Hello, {name}!";
+            return $"Hello, {name}! You are {age} years old.";
         };
 
         var httpContext = CreateHttpContext();
@@ -86,17 +86,47 @@ public partial class RequestDelegateFactoryTests : LoggedTest
 
         httpContext.Request.Query = new QueryCollection(new Dictionary<string, StringValues>
         {
-            ["name"] = "TestName"
+            ["name"] = "TestName",
+            ["age"] = "25"
         });
 
         // Act
-        var factoryResult = RequestDelegateFactory.Create(HelloName, null, new List<IEndpointFilter>() { new ModifyStringArgumentAgainFilter(), new ModifyStringArgumentFilter() });
+        var factoryResult = RequestDelegateFactory.Create(HelloName, null, new List<IEndpointFilter>() { new ModifyIntArgumentFilter(), new ModifyStringArgumentFilter() });
         var requestDelegate = factoryResult.RequestDelegate;
         await requestDelegate(httpContext);
 
         // Assert
         var responseBody = Encoding.UTF8.GetString(responseBodyStream.ToArray());
-        Assert.Equal("Hello, TestNameBarPrefix!", responseBody);
+        Assert.Equal("Hello, TestNamePrefix! You are 27 years old.", responseBody);
+    }
+
+    [Fact]
+    public async Task RequestDelegateFactory_CanInvokeSingleEndpointFilter_ThatModifiesBodyParameter()
+    {
+        // Arrange
+        Todo todo = new Todo() { Name = "Write tests ", IsComplete = true };
+        string PrintTodo(Todo todo)
+        {
+            return $"{todo.Name} is {(todo.IsComplete ? "done" : "not done")}.";
+        };
+
+        var httpContext = CreateHttpContext();
+
+        var requestBodyBytes = JsonSerializer.SerializeToUtf8Bytes(todo);
+        var stream = new MemoryStream(requestBodyBytes);
+        httpContext.Request.Body = stream;
+
+        var responseBodyStream = new MemoryStream();
+        httpContext.Response.Body = responseBodyStream;
+
+        // Act
+        var factoryResult = RequestDelegateFactory.Create(PrintTodo, null, new List<IEndpointFilter>() { new ModifyTodoArgumentFilter() });
+        var requestDelegate = factoryResult.RequestDelegate;
+        await requestDelegate(httpContext);
+
+        // Assert
+        var responseBody = Encoding.UTF8.GetString(responseBodyStream.ToArray());
+        Assert.Equal("Write tests is not done.", responseBody);
     }
 
     [Fact]
@@ -169,12 +199,22 @@ public partial class RequestDelegateFactoryTests : LoggedTest
         }
     }
 
-    public class ModifyStringArgumentAgainFilter : IEndpointFilter
+    public class ModifyIntArgumentFilter : IEndpointFilter
     {
         public async ValueTask<object?> RunAsync(EndpointFilterContext context, Func<EndpointFilterContext, ValueTask<object?>> next)
         {
-            Console.WriteLine("bar");
-            context.Parameters[0] = context.Parameters[0] != null ? $"{((string)context.Parameters[0])}Bar" : "NULL";
+            context.Parameters[1] = ((int)context.Parameters[1]) + 2;
+            return await next(context);
+        }
+    }
+
+    public class ModifyTodoArgumentFilter : IEndpointFilter
+    {
+        public async ValueTask<object?> RunAsync(EndpointFilterContext context, Func<EndpointFilterContext, ValueTask<object?>> next)
+        {
+            Todo originalTodo = (Todo)context.Parameters[0];
+            originalTodo.IsComplete = !originalTodo.IsComplete;
+            context.Parameters[0] = originalTodo;
             return await next(context);
         }
     }
