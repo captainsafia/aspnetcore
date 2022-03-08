@@ -1145,6 +1145,36 @@ public class EndpointMetadataApiDescriptionProviderTest
             constraint => Assert.IsType<MaxLengthRouteConstraint>(constraint));
     }
 
+    [Fact]
+    public void HandleEndpointWithWithApiDescription()
+    {
+        var builder = CreateBuilder();
+        builder.MapGet("/api/todos/{name}", (string name) => "")
+            .WithApiDescription(endpointApiDescription =>
+            {
+                endpointApiDescription.Parameters["name"].Description = "This is a description";
+                endpointApiDescription.Parameters["name"].ParameterType = typeof(int);
+                endpointApiDescription.Parameters["name"].Items["IsRequired"] = false;
+            });
+        var context = new ApiDescriptionProviderContext(Array.Empty<ActionDescriptor>());
+
+        var endpointDataSource = builder.DataSources.OfType<EndpointDataSource>().Single();
+        var hostEnvironment = new HostEnvironment
+        {
+            ApplicationName = nameof(EndpointMetadataApiDescriptionProviderTest)
+        };
+        var provider = CreateEndpointMetadataApiDescriptionProvider(endpointDataSource);
+
+        // Act
+        provider.OnProvidersExecuting(context);
+
+        // Assert
+        var apiDescription = Assert.Single(context.Results);
+        var parameter = Assert.Single(apiDescription.ParameterDescriptions);
+        Assert.False(parameter.IsRequired);
+        Assert.Equal(typeof(int), parameter.Type);
+    }
+
     private static IEnumerable<string> GetSortedMediaTypes(ApiResponseType apiResponseType)
     {
         return apiResponseType.ApiResponseFormats

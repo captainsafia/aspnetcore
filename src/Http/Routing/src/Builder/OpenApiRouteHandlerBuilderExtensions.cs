@@ -193,6 +193,18 @@ public static class OpenApiRouteHandlerBuilderExtensions
     }
 
     /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="builder"></param>
+    /// <param name="configureDescription"></param>
+    /// <returns></returns>
+    public static RouteHandlerBuilder WithApiDescription(this RouteHandlerBuilder builder, Action<EndpointApiDescription> configureDescription)
+    {
+        builder.WithMetadata(configureDescription);
+        return builder;
+    }
+
+    /// <summary>
     /// Adds <see cref="IAcceptsMetadata"/> to <see cref="EndpointBuilder.Metadata"/> for all builders
     /// produced by <paramref name="builder"/>.
     /// </summary>
