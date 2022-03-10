@@ -1,9 +1,11 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Reflection;
+
 namespace Microsoft.AspNetCore.Http;
 
-internal sealed class DelegateRouteHandlerFilter : IRouteHandlerFilter
+internal sealed class DelegateRouteHandlerFilter : IRouteHandlerFilterFactory
 {
     private readonly Func<RouteHandlerFilterContext, Func<RouteHandlerFilterContext, ValueTask<object?>>, ValueTask<object?>> _routeHandlerFilter;
 
@@ -12,8 +14,8 @@ internal sealed class DelegateRouteHandlerFilter : IRouteHandlerFilter
         _routeHandlerFilter = routeHandlerFilter;
     }
 
-    public ValueTask<object?> InvokeAsync(RouteHandlerFilterContext context, Func<RouteHandlerFilterContext, ValueTask<object?>> next)
+    public Func<RouteHandlerFilterContext, Func<RouteHandlerFilterContext, ValueTask<object?>>, ValueTask<object?>> BuildFilter(MethodInfo methodInfo)
     {
-        return _routeHandlerFilter(context, next);
+        return (context, next) => _routeHandlerFilter(context, next);
     }
 }

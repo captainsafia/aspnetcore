@@ -243,9 +243,9 @@ public static partial class RequestDelegateFactory
 
         for (var i = factoryContext.Filters.Count - 1; i >= 0; i--)
         {
-            var currentFilter = factoryContext.Filters![i];
+            var currentFilter = factoryContext.Filters[i];
             var nextFilter = filteredInvocation;
-            filteredInvocation = (RouteHandlerFilterContext context) => currentFilter.InvokeAsync(context, nextFilter);
+            filteredInvocation = (RouteHandlerFilterContext context) => currentFilter.BuildFilter(methodInfo)(context, nextFilter);
 
         }
         return filteredInvocation;
@@ -1693,7 +1693,7 @@ public static partial class RequestDelegateFactory
         public List<Expression> ContextArgAccess { get; } = new();
         public Expression? MethodCall { get; set; }
         public List<Expression> BoxedArgs { get; } = new();
-        public List<IRouteHandlerFilter>? Filters { get; init; }
+        public List<IRouteHandlerFilterFactory>? Filters { get; init; }
     }
 
     private static class RequestDelegateFactoryConstants

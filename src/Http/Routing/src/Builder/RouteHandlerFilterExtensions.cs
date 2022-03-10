@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Builder;
 namespace Microsoft.AspNetCore.Http;
 
 /// <summary>
-/// Extension methods for adding <see cref="IRouteHandlerFilter"/> to a route handler.
+/// Extension methods for adding <see cref="IRouteHandlerFilterFactory"/> to a route handler.
 /// </summary>
 public static class RouteHandlerFilterExtensions
 {
@@ -15,9 +15,9 @@ public static class RouteHandlerFilterExtensions
     /// Registers a filter onto the route handler.
     /// </summary>
     /// <param name="builder">The <see cref="RouteHandlerBuilder"/>.</param>
-    /// <param name="filter">The <see cref="IRouteHandlerFilter"/> to register.</param>
+    /// <param name="filter">The <see cref="IRouteHandlerFilterFactory"/> to register.</param>
     /// <returns>A <see cref="RouteHandlerBuilder"/> that can be used to further customize the route handler.</returns>
-    public static RouteHandlerBuilder AddFilter(this RouteHandlerBuilder builder, IRouteHandlerFilter filter)
+    public static RouteHandlerBuilder AddFilter(this RouteHandlerBuilder builder, IRouteHandlerFilterFactory filter)
     {
         builder.RouteHandlerFilters.Add(filter);
         return builder;
@@ -26,10 +26,10 @@ public static class RouteHandlerFilterExtensions
     /// <summary>
     /// Registers a filter of type <typeparamref name="TFilterType"/> onto the route handler.
     /// </summary>
-    /// <typeparam name="TFilterType">The type of the <see cref="IRouteHandlerFilter"/> to register.</typeparam>
+    /// <typeparam name="TFilterType">The type of the <see cref="IRouteHandlerFilterFactory"/> to register.</typeparam>
     /// <param name="builder">The <see cref="RouteHandlerBuilder"/>.</param>
     /// <returns>A <see cref="RouteHandlerBuilder"/> that can be used to further customize the route handler.</returns>
-    public static RouteHandlerBuilder AddFilter<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TFilterType>(this RouteHandlerBuilder builder) where TFilterType : IRouteHandlerFilter, new()
+    public static RouteHandlerBuilder AddFilter<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TFilterType>(this RouteHandlerBuilder builder) where TFilterType : IRouteHandlerFilterFactory, new()
     {
         builder.RouteHandlerFilters.Add(new TFilterType());
         return builder;
