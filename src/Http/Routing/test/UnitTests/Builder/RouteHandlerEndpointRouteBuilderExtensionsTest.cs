@@ -3,6 +3,7 @@
 
 #nullable enable
 
+using System.Reflection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
@@ -845,6 +846,95 @@ public class RouteHandlerEndpointRouteBuilderExtensionsTest
 
         await endpoint.RequestDelegate!(httpContext);
         Assert.Equal(400, httpContext.Response.StatusCode);
+    }
+
+    public static object[][] AddFiltersByClassData =
+    {
+        new object[] { (Action<RouteHandlerBuilder>)((RouteHandlerBuilder builder) => builder.AddFilter(new IncrementArgFilter())) },
+        new object[] { (Action<RouteHandlerBuilder>)((RouteHandlerBuilder builder) => builder.AddFilter<IncrementArgFilter>()) }
+    };
+
+    [Theory]
+    [MemberData(nameof(AddFiltersByClassData))]
+    public async Task AddFilterMethods_CanRegisterFilterWithClassImplementation(Action<RouteHandlerBuilder> addFilter)
+    {
+        var builder = new DefaultEndpointRouteBuilder(new ApplicationBuilder(new ServiceCollection().BuildServiceProvider()));
+
+        string PrintId(int id) => $"ID: {id}";
+        var routeHandlerBuilder = builder.Map("/{id}", PrintId);
+        addFilter(routeHandlerBuilder);
+
+        var dataSource = GetBuilderEndpointDataSource(builder);
+        // Trigger Endpoint build by calling getter.
+        var endpoint = Assert.Single(dataSource.Endpoints);
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.RouteValues["id"] = "2";
+        var outStream = new MemoryStream();
+        httpContext.Response.Body = outStream;
+
+        await endpoint.RequestDelegate!(httpContext);
+
+        // Assert;
+        var httpResponse = httpContext.Response;
+        httpResponse.Body.Seek(0, SeekOrigin.Begin);
+        var streamReader = new StreamReader(httpResponse.Body);
+        var body = streamReader.ReadToEndAsync().Result;
+        Assert.Equal(200, httpContext.Response.StatusCode);
+        Assert.Equal("ID: 3", body);
+    }
+
+    public static object[][] AddFiltersByDelegateData =
+{
+        new object[] { (Action<RouteHandlerBuilder>)((RouteHandlerBuilder builder) => builder.AddFilter(async (context, next) => {
+                context.Parameters[0] = ((int)context.Parameters[0]!) + 1;
+                return await next(context);
+            })) },
+        new object[] { (Action<RouteHandlerBuilder>)((RouteHandlerBuilder builder) => builder.AddFilter((methodInfo) => async (context, next) => {
+                context.Parameters[0] = ((int)context.Parameters[0]!) + 1;
+                return await next(context);
+            })) },
+    };
+
+    [Theory]
+    [MemberData(nameof(AddFiltersByDelegateData))]
+    public async Task AddFilterMethods_CanRegisterFilterWithDelegateImplementation(Action<RouteHandlerBuilder> addFilter)
+    {
+        var builder = new DefaultEndpointRouteBuilder(new ApplicationBuilder(new ServiceCollection().BuildServiceProvider()));
+
+        string PrintId(int id) => $"ID: {id}";
+        var routeHandlerBuilder = builder.Map("/{id}", PrintId);
+        addFilter(routeHandlerBuilder);
+
+        var dataSource = GetBuilderEndpointDataSource(builder);
+        // Trigger Endpoint build by calling getter.
+        var endpoint = Assert.Single(dataSource.Endpoints);
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.RouteValues["id"] = "2";
+        var outStream = new MemoryStream();
+        httpContext.Response.Body = outStream;
+
+        await endpoint.RequestDelegate!(httpContext);
+
+        // Assert;
+        var httpResponse = httpContext.Response;
+        httpResponse.Body.Seek(0, SeekOrigin.Begin);
+        var streamReader = new StreamReader(httpResponse.Body);
+        var body = streamReader.ReadToEndAsync().Result;
+        Assert.Equal(200, httpContext.Response.StatusCode);
+        Assert.Equal("ID: 3", body);
+    }
+
+    class IncrementArgFilter : IRouteHandlerFilterFactory
+    {
+        public Func<RouteHandlerFilterContext, Func<RouteHandlerFilterContext, ValueTask<object?>>, ValueTask<object?>> BuildFilter(MethodInfo methodInfo)
+        {
+            return async (context, next) => {
+                context.Parameters[0] = ((int)context.Parameters[0]!) + 1;
+                return await next(context);
+            };
+        }
     }
 
     class FromRoute : Attribute, IFromRouteMetadata

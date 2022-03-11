@@ -14,7 +14,6 @@
     <PackageTags>aspnetcore;routing</PackageTags>
     <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
-    <NoWarn>RS0016;RS0017</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>

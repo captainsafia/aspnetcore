@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 
 namespace Microsoft.AspNetCore.Http;
@@ -24,14 +25,14 @@ public static class RouteHandlerFilterExtensions
     }
 
     /// <summary>
-    /// Registers a filter of type <typeparamref name="TFilterType"/> onto the route handler.
+    /// Registers a filter of type <typeparamref name="TFilterFactoryType"/> onto the route handler.
     /// </summary>
-    /// <typeparam name="TFilterType">The type of the <see cref="IRouteHandlerFilterFactory"/> to register.</typeparam>
+    /// <typeparam name="TFilterFactoryType">The type of the <see cref="IRouteHandlerFilterFactory"/> to register.</typeparam>
     /// <param name="builder">The <see cref="RouteHandlerBuilder"/>.</param>
     /// <returns>A <see cref="RouteHandlerBuilder"/> that can be used to further customize the route handler.</returns>
-    public static RouteHandlerBuilder AddFilter<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TFilterType>(this RouteHandlerBuilder builder) where TFilterType : IRouteHandlerFilterFactory, new()
+    public static RouteHandlerBuilder AddFilter<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TFilterFactoryType>(this RouteHandlerBuilder builder) where TFilterFactoryType : IRouteHandlerFilterFactory, new()
     {
-        builder.RouteHandlerFilters.Add(new TFilterType());
+        builder.RouteHandlerFilters.Add(new TFilterFactoryType());
         return builder;
     }
 
@@ -43,7 +44,19 @@ public static class RouteHandlerFilterExtensions
     /// <returns>A <see cref="RouteHandlerBuilder"/> that can be used to further customize the route handler.</returns>
     public static RouteHandlerBuilder AddFilter(this RouteHandlerBuilder builder, Func<RouteHandlerFilterContext, Func<RouteHandlerFilterContext, ValueTask<object?>>, ValueTask<object?>> routeHandlerFilter)
     {
-        builder.RouteHandlerFilters.Add(new DelegateRouteHandlerFilter(routeHandlerFilter));
+        builder.RouteHandlerFilters.Add(new DelegateRouteHandlerFilterFactory((MethodInfo methodInfo) => routeHandlerFilter));
+        return builder;
+    }
+
+    /// <summary>
+    /// Registers a filter given a delegate representing the filter factory onto the route handler.
+    /// </summary>
+    /// <param name="builder">The <see cref="RouteHandlerBuilder"/>.</param>
+    /// <param name="routeHandlerFilterFactory">A <see cref="Delegate"/> for constructing the filter from a <see cref="MethodInfo"/>.</param>
+    /// <returns>A <see cref="RouteHandlerBuilder"/> that can be used to further customize the route handler.</returns>
+    public static RouteHandlerBuilder AddFilter(this RouteHandlerBuilder builder, Func<MethodInfo, Func<RouteHandlerFilterContext, Func<RouteHandlerFilterContext, ValueTask<object?>>, ValueTask<object?>>> routeHandlerFilterFactory)
+    {
+        builder.RouteHandlerFilters.Add(new DelegateRouteHandlerFilterFactory(routeHandlerFilterFactory));
         return builder;
     }
 }

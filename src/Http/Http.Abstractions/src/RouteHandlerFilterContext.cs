@@ -28,7 +28,7 @@ public class RouteHandlerFilterContext
     /// <summary>
     /// A list of parameters provided in the current request to the filter.
     /// <remarks>
-    /// This list is not read-only to premit modifying of existing parameters by filters.
+    /// This list is not read-only to permit modifying of existing parameters by filters.
     /// </remarks>
     /// </summary>
     public IList<object?> Parameters { get; }

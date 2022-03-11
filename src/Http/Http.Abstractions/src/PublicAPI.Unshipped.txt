@@ -1,8 +1,9 @@
 #nullable enable
 *REMOVED*abstract Microsoft.AspNetCore.Http.HttpResponse.ContentType.get -> string!
 Microsoft.AspNetCore.Http.EndpointMetadataCollection.GetRequiredMetadata<T>() -> T!
+Microsoft.AspNetCore.Http.IRouteHandlerFilterFactory
+Microsoft.AspNetCore.Http.IRouteHandlerFilterFactory.BuildFilter(System.Reflection.MethodInfo! methodInfo) -> System.Func<Microsoft.AspNetCore.Http.RouteHandlerFilterContext!, System.Func<Microsoft.AspNetCore.Http.RouteHandlerFilterContext!, System.Threading.Tasks.ValueTask<object?>>!, System.Threading.Tasks.ValueTask<object?>>!
 Microsoft.AspNetCore.Http.RouteHandlerFilterContext.RouteHandlerFilterContext(Microsoft.AspNetCore.Http.HttpContext! httpContext, params object![]! parameters) -> void
-Microsoft.AspNetCore.Http.IRouteHandlerFilter.InvokeAsync(Microsoft.AspNetCore.Http.RouteHandlerFilterContext! context, System.Func<Microsoft.AspNetCore.Http.RouteHandlerFilterContext!, System.Threading.Tasks.ValueTask<object?>>! next) -> System.Threading.Tasks.ValueTask<object?>
 Microsoft.AspNetCore.Http.Metadata.IFromFormMetadata
 Microsoft.AspNetCore.Http.Metadata.IFromFormMetadata.Name.get -> string?
 Microsoft.AspNetCore.Routing.RouteValueDictionary.RouteValueDictionary(Microsoft.AspNetCore.Routing.RouteValueDictionary? dictionary) -> void
@@ -13,4 +14,3 @@ Microsoft.AspNetCore.Http.Metadata.ISkipStatusCodePagesMetadata
 Microsoft.AspNetCore.Http.RouteHandlerFilterContext
 Microsoft.AspNetCore.Http.RouteHandlerFilterContext.HttpContext.get -> Microsoft.AspNetCore.Http.HttpContext!
 Microsoft.AspNetCore.Http.RouteHandlerFilterContext.Parameters.get -> System.Collections.Generic.IList<object?>!
-Microsoft.AspNetCore.Http.IRouteHandlerFilter

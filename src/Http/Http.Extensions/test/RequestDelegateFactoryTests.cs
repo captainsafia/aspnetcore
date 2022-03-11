@@ -4291,6 +4291,40 @@ public class RequestDelegateFactoryTests : LoggedTest
         Assert.Equal(2, loggerInvoked);
     }
 
+
+    [Fact]
+    public async Task RequestDelegateFactory_CanInvokeEndpointFilterThatUsesMethodInfo()
+    {
+        // Arrange
+        string HelloName(string name)
+        {
+            return $"Hello, {name}! You are {age} years old.";
+        };
+
+        var httpContext = CreateHttpContext();
+
+        var responseBodyStream = new MemoryStream();
+        httpContext.Response.Body = responseBodyStream;
+
+        httpContext.Request.Query = new QueryCollection(new Dictionary<string, StringValues>
+        {
+            ["name"] = "TestName",
+            ["age"] = "25"
+        });
+
+        // Act
+        var factoryResult = RequestDelegateFactory.Create(HelloName, new RequestDelegateFactoryOptions()
+        {
+            RouteHandlerFilters = new List<IRouteHandlerFilterFactory>() { new ModifyIntArgumentFilter() }
+        });
+        var requestDelegate = factoryResult.RequestDelegate;
+        await requestDelegate(httpContext);
+
+        // Assert
+        var responseBody = Encoding.UTF8.GetString(responseBodyStream.ToArray());
+        Assert.Equal("Second argument is not a number!", responseBody);
+    }
+
     [Fact]
     public async Task RequestDelegateFactory_CanInvokeSingleEndpointFilter_ThatModifiesBodyParameter()
     {
@@ -4767,7 +4801,14 @@ public class RequestDelegateFactoryTests : LoggedTest
         {
             return async (context, next) =>
             {
-                context.Parameters[1] = ((int)context.Parameters[1]!) + 2;
+                if (methodInfo.GetParameters()[1].ParameterType == typeof(int))
+                {
+                    context.Parameters[1] = ((int)context.Parameters[1]!) + 2;
+                }
+                else
+                {
+                    return "Second argument is not a number!";
+                }
                 return await next(context);
             };
         }
