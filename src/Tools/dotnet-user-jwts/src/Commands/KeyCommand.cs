@@ -1,6 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Text.Json;
 using Microsoft.Extensions.CommandLineUtils;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Tools.Internal;
@@ -29,12 +30,12 @@ internal sealed class KeyCommand
 
             cmd.OnExecute(() =>
             {
-                return Execute(cmd.Reporter, cmd.ProjectOption.Value(), resetOption.HasValue(), forceOption.HasValue());
+                return Execute(cmd.Reporter, cmd.OutputOption.Value(), cmd.ProjectOption.Value(), resetOption.HasValue(), forceOption.HasValue());
             });
         });
     }
 
-    private static int Execute(IReporter reporter, string projectPath, bool reset, bool force)
+    private static int Execute(IReporter reporter, string outputFormat, string projectPath, bool reset, bool force)
     {
         if (!DevJwtCliHelpers.GetProjectAndSecretsId(projectPath, reporter, out var _, out var userSecretsId))
         {
@@ -47,7 +48,7 @@ internal sealed class KeyCommand
             {
                 reporter.Output(Resources.KeyCommand_Permission);
                 reporter.Error("[Y]es / [N]o");
-                if (Console.ReadLine().Trim().ToUpperInvariant() != "Y")
+                if (Console.ReadLine().Trim().ToUpperInvariant() != "Y" && outputFormat == null)
                 {
                     reporter.Output(Resources.KeyCommand_Canceled);
                     return 0;
@@ -55,7 +56,17 @@ internal sealed class KeyCommand
             }
 
             var key = DevJwtCliHelpers.CreateSigningKeyMaterial(userSecretsId, reset: true);
-            reporter.Output(Resources.FormatKeyCommand_KeyCreated(Convert.ToBase64String(key)));
+            var encodedCode = new Dictionary<string, string>() {
+                { DevJwtsDefaults.SigningKeyConfigurationKey, Convert.ToBase64String(key) }
+            };
+            if (outputFormat == null)
+            {
+                reporter.Output(Resources.FormatKeyCommand_KeyCreated(encodedCode));
+            }
+            else
+            {
+                reporter.Output(JsonSerializer.Serialize(encodedCode));
+            }
             return 0; 
         }
 
@@ -64,13 +75,24 @@ internal sealed class KeyCommand
             .Build();
         var signingKeyMaterial = projectConfiguration[DevJwtsDefaults.SigningKeyConfigurationKey];
 
-        if (signingKeyMaterial is null)
+        if (signingKeyMaterial is null && outputFormat == null)
         {
             reporter.Output(Resources.KeyCommand_KeyNotFound);
             return 0;
         }
 
-        reporter.Output(Resources.FormatKeyCommand_Confirmed(signingKeyMaterial));
+        if (outputFormat == "json")
+        {
+            var encodedCode = new Dictionary<string, string>() {
+                { DevJwtsDefaults.SigningKeyConfigurationKey, signingKeyMaterial }
+            };
+            reporter.Output(JsonSerializer.Serialize(encodedCode));
+        }
+        else
+        {
+            reporter.Output(Resources.FormatKeyCommand_Confirmed(signingKeyMaterial));
+        }
+        
         return 0;
     }
 }

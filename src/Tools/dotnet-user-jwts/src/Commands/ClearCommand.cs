@@ -23,12 +23,12 @@ internal sealed class ClearCommand
 
             cmd.OnExecute(() =>
             {
-                return Execute(cmd.Reporter, cmd.ProjectOption.Value(), forceOption.HasValue());
+                return Execute(cmd.Reporter, cmd.OutputOption.HasValue(), cmd.ProjectOption.Value(), forceOption.HasValue());
             });
         });
     }
 
-    private static int Execute(IReporter reporter, string projectPath, bool force)
+    private static int Execute(IReporter reporter, bool hasOutput, string projectPath, bool force)
     {
         if (!DevJwtCliHelpers.GetProjectAndSecretsId(projectPath, reporter, out var project, out var userSecretsId))
         {
@@ -37,7 +37,7 @@ internal sealed class ClearCommand
         var jwtStore = new JwtStore(userSecretsId);
         var count = jwtStore.Jwts.Count;
 
-        if (count == 0)
+        if (count == 0 && !hasOutput)
         {
             reporter.Output(Resources.FormatClearCommand_NoJwtsRemoved(project));
             return 0;
@@ -47,7 +47,7 @@ internal sealed class ClearCommand
         {
             reporter.Output(Resources.ClearCommand_Permission);
             reporter.Output("[Y]es / [N]o");
-            if (Console.ReadLine().Trim().ToUpperInvariant() != "Y")
+            if (Console.ReadLine().Trim().ToUpperInvariant() != "Y" && !hasOutput)
             {
                 reporter.Output(Resources.ClearCommand_Canceled);
                 return 0;
@@ -63,7 +63,10 @@ internal sealed class ClearCommand
         jwtStore.Jwts.Clear();
         jwtStore.Save();
 
-        reporter.Output(Resources.FormatClearCommand_Confirmed(count, project));
+        if (!hasOutput)
+        {
+            reporter.Output(Resources.FormatClearCommand_Confirmed(count, project));
+        }
 
         return 0;
     }

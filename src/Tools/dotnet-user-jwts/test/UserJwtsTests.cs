@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer.Tools;
 using Xunit;
 using Xunit.Abstractions;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 
 namespace Microsoft.AspNetCore.Authentication.JwtBearer.Tools.Tests;
 
@@ -88,7 +89,6 @@ public class UserJwtsTests : IClassFixture<UserJwtsTestFixture>
     public void List_ReturnsIdForGeneratedToken()
     {
         var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
-        var appsettings = Path.Combine(Path.GetDirectoryName(project), "appsettings.Development.json");
         var app = new Program(_console);
 
         app.Run(new[] { "create", "--project", project, "--scheme", "MyCustomScheme" });
@@ -217,7 +217,22 @@ public class UserJwtsTests : IClassFixture<UserJwtsTestFixture>
     }
 
     [Fact]
-    public void PrintCommand_ShowsBasicOptions()
+    public void Create_WithJsonOutput_CanBeSerialized()
+    {
+        var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
+        var app = new Program(_console);
+
+        app.Run(new[] { "create", "--project", project, "--output-format", "json" });
+        var output = _console.GetOutput();
+        var deserialized = JsonSerializer.Deserialize<Jwt>(output);
+
+        Assert.NotNull(deserialized);
+        Assert.Equal("Bearer", deserialized.Scheme);
+        Assert.Equal(Environment.UserName, deserialized.Name);
+    }
+
+    [Fact]
+    public void Print_WithJsonOutput_CanBeSerialized()
     {
         var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
         var app = new Program(_console);
@@ -236,7 +251,7 @@ public class UserJwtsTests : IClassFixture<UserJwtsTestFixture>
     }
 
     [Fact]
-    public void PrintCommand_ShowsCustomizedOptions()
+    public void List_WithJsonOutput_CanBeSerialized()
     {
         var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
         var app = new Program(_console);
@@ -262,6 +277,41 @@ public class UserJwtsTests : IClassFixture<UserJwtsTestFixture>
         var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
         var app = new Program(_console);
 
+        app.Run(new[] { "create", "--project", project });
+        app.Run(new[] { "create", "--project", project, "--scheme", "foobar" });
+        _console.ClearOutput();
+        app.Run(new[] { "list", "--project", project, "--output-format", "json" });
+        var output = _console.GetOutput();
+        var deserialized = JsonSerializer.Deserialize<Jwt[]>(output);
+
+        Assert.NotNull(deserialized);
+        Assert.Equal(2, deserialized.Length);
+        Assert.Equal("Bearer", deserialized[0].Scheme);
+        Assert.Equal("foobar", deserialized[1].Scheme);
+    }
+
+    [Fact]
+    public void Clear_WithJsonOutput_OnlyReturnsSignal()
+    {
+        var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
+        var app = new Program(_console);
+
+        app.Run(new[] { "create", "--project", project, "--claim", "foo=bar" });
+        var matches = Regex.Matches(_console.GetOutput(), "New JWT saved with ID '(.*?)'");
+        var id = matches.SingleOrDefault().Groups[1].Value;
+
+        app.Run(new[] { "print", id, "--project", project, "--show-all" });
+        var output = _console.GetOutput();
+
+        Assert.Equal(string.Empty, output);
+    }
+
+    [Fact]
+    public void PrintCommand_ShowsCustomizedOptions()
+    {
+        var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
+        var app = new Program(_console);
+
         app.Run(new[] { "create", "--project", project, "--claim", "foo=bar" });
         var matches = Regex.Matches(_console.GetOutput(), "New JWT saved with ID '(.*?)'");
         var id = matches.SingleOrDefault().Groups[1].Value;
@@ -276,5 +326,56 @@ public class UserJwtsTests : IClassFixture<UserJwtsTestFixture>
         Assert.Contains($"Scopes: none", output);
         Assert.Contains($"Roles: [none]", output);
         Assert.Contains($"Custom Claims: [foo=bar]", output);
+        app.Run(new[] { "create", "--project", project });
+        _console.ClearOutput();
+        app.Run(new[] { "clear", "--project", project, "--force", "--output-format", "json" });
+    }
+
+    [Fact]
+    public void Remove_WithJsonOutput_OnlyReturnsSignal()
+    {
+        var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
+        var app = new Program(_console);
+
+        app.Run(new[] { "create", "--project", project });
+        var matches = Regex.Matches(_console.GetOutput(), "New JWT saved with ID '(.*?)'");
+        var id = matches.SingleOrDefault().Groups[1].Value;
+        _console.ClearOutput();
+        app.Run(new[] { "remove", id, "--project", project, "--output-format", "json" });
+
+        var output = _console.GetOutput();
+        Assert.Equal(string.Empty, output);
+    }
+
+    [Fact]
+    public void Key_Reset_WithJsonOutput_OnlyReturnsNewKey()
+    {
+        var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
+        var app = new Program(_console);
+
+        app.Run(new[] { "key", "--project", project, "--reset", "--force", "--output-format", "json" });
+
+        var output = _console.GetOutput();
+        var deserialized = JsonSerializer.Deserialize<Dictionary<string, string>>(output);
+
+        Assert.NotNull(deserialized);
+        var kvp = Assert.Single(deserialized);
+        Assert.Equal("dotnet-user-jwts:KeyMaterial", kvp.Key);
+    }
+
+    [Fact]
+    public void Key_WithJsonOutput_OnlyReturnsNewKey()
+    {
+        var project = Path.Combine(_fixture.CreateProject(), "TestProject.csproj");
+        var app = new Program(_console);
+
+        app.Run(new[] { "key", "--project", project, "--output-format", "json" });
+
+        var output = _console.GetOutput();
+        var deserialized = JsonSerializer.Deserialize<Dictionary<string, string>>(output);
+
+        Assert.NotNull(deserialized);
+        var kvp = Assert.Single(deserialized);
+        Assert.Equal("dotnet-user-jwts:KeyMaterial", kvp.Key);
     }
 }

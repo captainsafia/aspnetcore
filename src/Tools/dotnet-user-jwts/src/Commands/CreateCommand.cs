@@ -4,6 +4,7 @@
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.CommandLineUtils;
 using Microsoft.Extensions.Tools.Internal;
 
@@ -89,7 +90,7 @@ internal sealed class CreateCommand
                     return 1;
                 }
 
-                return Execute(cmd.Reporter, cmd.ProjectOption.Value(), options, optionsString);
+                return Execute(cmd.Reporter, cmd.OutputOption.Value(), cmd.ProjectOption.Value(), options, optionsString);
             });
         });
     }
@@ -206,6 +207,7 @@ internal sealed class CreateCommand
 
     private static int Execute(
         IReporter reporter,
+        string outputFormat,
         string projectPath,
         JwtCreatorOptions options,
         string optionsString)
@@ -232,9 +234,16 @@ internal sealed class CreateCommand
         var settingsToWrite = new JwtAuthenticationSchemeSettings(options.Scheme, options.Audiences, options.Issuer);
         settingsToWrite.Save(appsettingsFilePath);
 
-        reporter.Output(Resources.FormatCreateCommand_Confirmed(jwtToken.Id));
-        reporter.Output(optionsString);
-        reporter.Output($"{Resources.JwtPrint_Token}: {jwt.Token}");
+        if (outputFormat == "json")
+        {
+            reporter.Output(JsonSerializer.Serialize(jwt));
+        }
+        else
+        {
+            reporter.Output(Resources.FormatCreateCommand_Confirmed(jwtToken.Id));
+            reporter.Output(optionsString);
+            reporter.Output($"{Resources.JwtPrint_Token}: {jwt.Token}");
+        }
 
         return 0;
     }

@@ -270,6 +270,9 @@
   <data name="ListCommand_UserSecretsId" xml:space="preserve">
     <value>User Secrets ID: '{0}'</value>
   </data>
+  <data name="OutputOption_Description" xml:space="preserve">
+    <value>The format to display the output in. Supports 'json'.</value>
+  </data>
   <data name="PrintCommand_Confirmed" xml:space="preserve">
     <value>Found JWT with ID '{0}'.</value>
   </data>

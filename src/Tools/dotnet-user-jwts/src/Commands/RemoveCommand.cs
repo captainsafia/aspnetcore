@@ -24,12 +24,12 @@ internal sealed class RemoveCommand
                     cmd.ShowHelp();
                     return 0;
                 }
-                return Execute(cmd.Reporter, cmd.ProjectOption.Value(), idArgument.Value);
+                return Execute(cmd.Reporter, cmd.OutputOption.HasValue(), cmd.ProjectOption.Value(), idArgument.Value);
             });
         });
     }
 
-    private static int Execute(IReporter reporter, string projectPath, string id)
+    private static int Execute(IReporter reporter, bool hasOutput, string projectPath, string id)
     {
         if (!DevJwtCliHelpers.GetProjectAndSecretsId(projectPath, reporter, out var project, out var userSecretsId))
         {
@@ -39,7 +39,10 @@ internal sealed class RemoveCommand
 
         if (!jwtStore.Jwts.ContainsKey(id))
         {
-            reporter.Error(Resources.FormatRemoveCommand_NoJwtFound(id));
+            if (!hasOutput)
+            {
+                reporter.Error(Resources.FormatRemoveCommand_NoJwtFound(id));
+            }
             return 1;
         }
 
@@ -49,7 +52,11 @@ internal sealed class RemoveCommand
         jwtStore.Jwts.Remove(id);
         jwtStore.Save();
 
-        reporter.Output(Resources.FormatRemoveCommand_Confirmed(id));
+        if (!hasOutput)
+        {
+            reporter.Output(Resources.FormatRemoveCommand_Confirmed(id));
+        }
+        
 
         return 0;
     }

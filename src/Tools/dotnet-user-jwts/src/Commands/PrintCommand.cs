@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.IdentityModel.Tokens.Jwt;
+using System.Text.Json;
 using Microsoft.Extensions.CommandLineUtils;
 using Microsoft.Extensions.Tools.Internal;
 
@@ -26,16 +27,12 @@ internal sealed class PrintCommand
                     cmd.ShowHelp();
                     return 0;
                 }
-                return Execute(
-                    cmd.Reporter,
-                    cmd.ProjectOption.Value(),
-                    idArgument.Value,
-                    showAllOption.HasValue());
+                return Execute(cmd.Reporter, cmd.OutputOption.Value(), cmd.ProjectOption.Value(), idArgument.Value, showAllOption.HasValue());
             });
         });
     }
 
-    private static int Execute(IReporter reporter, string projectPath, string id, bool showAll)
+    private static int Execute(IReporter reporter, string format, string projectPath, string id, bool showAll)
     {
         if (!DevJwtCliHelpers.GetProjectAndSecretsId(projectPath, reporter, out var _, out var userSecretsId))
         {
@@ -45,13 +42,23 @@ internal sealed class PrintCommand
 
         if (!jwtStore.Jwts.TryGetValue(id, out var jwt))
         {
-            reporter.Output(Resources.FormatPrintCommand_NoJwtFound(id));
+            if (format == null)
+            {
+                reporter.Output(Resources.FormatPrintCommand_NoJwtFound(id));
+            }
             return 1;
         }
 
-        reporter.Output(Resources.FormatPrintCommand_Confirmed(id));
-        JwtSecurityToken fullToken = JwtIssuer.Extract(jwt.Token);
-        DevJwtCliHelpers.PrintJwt(reporter, jwt, showAll, fullToken);
+        if (format == "json")
+        {
+            reporter.Output(JsonSerializer.Serialize(jwt));
+        }
+        else
+        {
+            reporter.Output(Resources.FormatPrintCommand_Confirmed(id));
+            JwtSecurityToken fullToken = JwtIssuer.Extract(jwt.Token);
+            DevJwtCliHelpers.PrintJwt(reporter, jwt, showAll, fullToken);
+        }
 
         return 0;
     }

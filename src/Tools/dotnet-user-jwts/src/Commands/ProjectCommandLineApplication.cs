@@ -10,6 +10,8 @@ internal sealed class ProjectCommandLineApplication : CommandLineApplication
 {
     public CommandOption ProjectOption { get; private set; }
 
+    public CommandOption OutputOption { get; private set; }
+
     public IReporter Reporter { get; private set; }
 
     public ProjectCommandLineApplication(IReporter reporter, bool throwOnUnexpectedArg = true, bool continueAfterUnexpectedArg = false, bool treatUnmatchedOptionsAsArguments = false)
@@ -18,6 +20,10 @@ internal sealed class ProjectCommandLineApplication : CommandLineApplication
         ProjectOption = Option(
             "-p|--project",
             Resources.ProjectOption_Description,
+            CommandOptionType.SingleValue);
+        OutputOption = Option(
+            "-o|--output-format",
+            Resources.OutputOption_Description,
             CommandOptionType.SingleValue);
         Reporter = reporter;
     }
