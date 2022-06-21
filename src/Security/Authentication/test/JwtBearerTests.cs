@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -918,6 +919,29 @@ public class JwtBearerTests : SharedAuthenticationTests<JwtBearerOptions>
         var schemeProvider = sp.GetRequiredService<IAuthenticationSchemeProvider>();
         var defaultSchemeFromServices = await schemeProvider.GetDefaultAuthenticateSchemeAsync();
         Assert.Equal(defaultSchemeFromConfig, defaultSchemeFromServices.Name);
+    }
+
+    [Fact]
+    public void CanReadJwtBearerOptionsFromConfig()
+    {
+        var services = new ServiceCollection();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new[]
+        {
+            new KeyValuePair<string, string>("Authentication:Schemes:Bearer:ClaimsIssuer", "dotnet-user-jwts"),
+            new KeyValuePair<string, string>("Authentication:Schemes:Bearer:IncludeErrorDetails", "true"),
+            new KeyValuePair<string, string>("Authentication:Schemes:Bearer:Audiences:0", "https://localhost:5001" ),
+            new KeyValuePair<string, string>("Authentication:Schemes:Bearer:Audiences:1", "http://localhost:5000" )
+        }).Build(); ;
+        services.AddSingleton<IConfiguration>(config);
+        services.AddAuthentication().AddJwtBearer();
+        var options = services.BuildServiceProvider().GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get("Bearer");
+        // Can bind using the default AuthenticationSchemeOptions binder
+        Assert.Equal("dotnet-user-jwts", options.ClaimsIssuer);
+        Assert.True(options.IncludeErrorDetails);
+        Assert.Contains("https://localhost:5001", options.TokenValidationParameters.ValidAudiences);
+        // Can configure TokenValidation correctly via JwtBearerConfigureOptions
+        Assert.Contains("http://localhost:5000", options.TokenValidationParameters.ValidAudiences);
+        Assert.Equal(new[] { "dotnet-user-jwts" }, options.TokenValidationParameters.ValidIssuers);
     }
 
     class InvalidTokenValidator : ISecurityTokenValidator

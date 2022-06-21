@@ -31,6 +31,7 @@ public class AuthenticationBuilder
         where TOptions : AuthenticationSchemeOptions, new()
         where THandler : class, IAuthenticationHandler
     {
+        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<TOptions>, AuthenticationSchemeConfigurationOptions<TOptions>>());
         var state = new AddSchemeHelperState(typeof(THandler));
         Services.Configure<AuthenticationOptions>(o =>
         {

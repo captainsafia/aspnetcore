@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -182,7 +183,7 @@ public class CookieTests : SharedAuthenticationTests<CookieAuthenticationOptions
     [Fact]
     public void SettingCookieExpirationOptionThrows()
     {
-        var services = new ServiceCollection();
+        var services = new ServiceCollection().AddSingleton<IConfiguration>(new ConfigurationManager());
         services.AddAuthentication().AddCookie(o =>
         {
             o.Cookie.Expiration = TimeSpan.FromDays(10);
