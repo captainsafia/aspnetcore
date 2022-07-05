@@ -201,10 +201,19 @@ internal sealed class OpenApiGenerator
                 responseContent[contentType] = new OpenApiMediaType();
             }
 
-            responses[statusCode] = new OpenApiResponse { Content = responseContent };
+            responses[statusCode] = new OpenApiResponse
+            {
+                Content = responseContent,
+                Description = GetStatusCodeDescription(annotation.Key)
+            };
         }
 
         return responses;
+    }
+
+    private static string GetStatusCodeDescription(int statusCode)
+    {
+        throw new NotImplementedException();
     }
 
     private static void GenerateDefaultContent(MediaTypeCollection discoveredContentTypeAnnotation, Type? discoveredTypeAnnotation)
@@ -363,10 +372,10 @@ internal sealed class OpenApiGenerator
 
             var (isBodyOrFormParameter, parameterLocation) = GetOpenApiParameterLocation(parameter, pattern, disableInferredBody);
 
-            // If the parameter isn't something that would be populated in RequestBody
-            // or doesn't have a valid ParameterLocation, then it must be a service
-            // parameter that we can ignore.
-            if (!isBodyOrFormParameter && parameterLocation is null)
+            // If the parameter is meant to be transmitted in the request
+            // body or is a service parameter, then it can be ignored. Only
+            // header, query, and route parameter are populated here.
+            if (isBodyOrFormParameter || parameterLocation is null)
             {
                 continue;
             }
