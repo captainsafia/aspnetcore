@@ -46,6 +46,11 @@ public static class OpenApiEndpointConventionBuilderExtensions
         return services;
     }
 
+    public static IApplicationBuilder MapOpenApiDocument(this IApplicationBuilder app)
+    {
+        return app;
+    }
+
     /// <summary>
     /// Adds an OpenAPI annotation to <see cref="Endpoint.Metadata" /> associated
     /// with the current endpoint.
