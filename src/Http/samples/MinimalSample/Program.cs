@@ -1,30 +1,29 @@
-using Microsoft.AspNetCore.Builder;
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+using System.Reflection;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http.Metadata;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using Microsoft.OpenApi;
+using Microsoft.OpenApi.Extensions;
+using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi.Writers;
+using Microsoft.AspNetCore.OpenApi; 
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.EnableOpenApi();
+builder.Services.AddAuthentication();
+builder.Services.AddAuthorization();
+
+builder.UseOpenApi();
 
 var app = builder.Build();
 
-var todos = app.MapGroup("/todos");
-var tasks = new List<Todo>
-{
-    new Todo(1, "Walk dog", false),
-    new Todo(2, "Clean fridge", true)
-};
+string Plaintext() => "Hello, World!";
 
-todos.MapGet("", () => tasks);
-
-todos.MapPost("", (Todo todo) =>
-{
-    tasks.Add(todo);
-    return TypedResults.Created<Todo>(todo);
-});
-
-todos.MapGet("/{id}", (int id) => {
-    tasks.Single(task => task.Id == id);
-    });
+app.MapGet("/plaintext", Plaintext);
+app.MapGet("/plaintext-secured", Plaintext);
 
 app.Run();
-
-record Todo(int Id, string Title, bool IsCompleted)
