@@ -45,7 +45,7 @@ internal sealed class OpenApiGenerator
         _serviceProviderIsService = serviceProviderIsService;
     }
 
-    internal OpenApiDocument GetOpenApiDocument(OpenApiDocument document, IReadOnlyList<Endpoint> endpoints)
+    internal OpenApiDocument GetOpenApiDocument(OpenApiDocument document, JsonSchemaGenerator schemaGenerator, IReadOnlyList<Endpoint> endpoints)
     {
         foreach (var endpoint in endpoints)
         {
@@ -57,7 +57,7 @@ internal sealed class OpenApiGenerator
                     httpMethodMetadata.HttpMethods.SingleOrDefault() is { } method &&
                     metadata.GetMetadata<IExcludeFromDescriptionMetadata>() is null or { ExcludeFromDescription: false })
                 {
-                    var operation = GetOperation(method, methodInfo, metadata, routeEndpoint.RoutePattern);
+                    var operation = GetOperation(method, methodInfo, metadata, routeEndpoint.RoutePattern, schemaGenerator);
                     var operationType = method switch
                     {
                         string s when s == HttpMethods.Get => OperationType.Get,
@@ -77,8 +77,11 @@ internal sealed class OpenApiGenerator
                     }
                     else
                     {
-                        document.Paths[routeEndpoint.RoutePattern.RawText]
+                        if (!document.Paths[routeEndpoint.RoutePattern.RawText].Operations.ContainsKey(operationType))
+                        {
+                            document.Paths[routeEndpoint.RoutePattern.RawText]
                             .AddOperation(operationType, operation);
+                        }
                     }
                 }        
             }
@@ -96,19 +99,20 @@ internal sealed class OpenApiGenerator
     internal OpenApiOperation? GetOpenApiOperation(
         MethodInfo methodInfo,
         EndpointMetadataCollection metadata,
-        RoutePattern pattern)
+        RoutePattern pattern,
+        JsonSchemaGenerator? schemaGenerator = null)
     {
         if (metadata.GetMetadata<IHttpMethodMetadata>() is { } httpMethodMetadata &&
             httpMethodMetadata.HttpMethods.SingleOrDefault() is { } method &&
             metadata.GetMetadata<IExcludeFromDescriptionMetadata>() is null or { ExcludeFromDescription: false })
         {
-            return GetOperation(method, methodInfo, metadata, pattern);
+            return GetOperation(method, methodInfo, metadata, pattern, schemaGenerator);
         }
 
         return null;
     }
 
-    private OpenApiOperation GetOperation(string httpMethod, MethodInfo methodInfo, EndpointMetadataCollection metadata, RoutePattern pattern)
+    private OpenApiOperation GetOperation(string httpMethod, MethodInfo methodInfo, EndpointMetadataCollection metadata, RoutePattern pattern, JsonSchemaGenerator? schemaGenerator = null)
     {
         var disableInferredBody = ShouldDisableInferredBody(httpMethod);
         return new OpenApiOperation
@@ -117,9 +121,9 @@ internal sealed class OpenApiGenerator
             Summary = metadata.GetMetadata<IEndpointSummaryMetadata>()?.Summary,
             Description = metadata.GetMetadata<IEndpointDescriptionMetadata>()?.Description,
             Tags = GetOperationTags(methodInfo, metadata),
-            Parameters = GetOpenApiParameters(methodInfo, metadata, pattern, disableInferredBody),
-            RequestBody = GetOpenApiRequestBody(methodInfo, metadata, pattern),
-            Responses = GetOpenApiResponses(methodInfo, metadata)
+            Parameters = GetOpenApiParameters(methodInfo, metadata, pattern, disableInferredBody, schemaGenerator),
+            RequestBody = GetOpenApiRequestBody(methodInfo, metadata, pattern, schemaGenerator),
+            Responses = GetOpenApiResponses(methodInfo, metadata, schemaGenerator)
         };
 
         static bool ShouldDisableInferredBody(string method)
@@ -134,7 +138,7 @@ internal sealed class OpenApiGenerator
         }
     }
 
-    private static OpenApiResponses GetOpenApiResponses(MethodInfo method, EndpointMetadataCollection metadata)
+    private static OpenApiResponses GetOpenApiResponses(MethodInfo method, EndpointMetadataCollection metadata, JsonSchemaGenerator? schemaGenerator)
     {
         var responses = new OpenApiResponses();
         var responseType = method.ReturnType;
@@ -235,13 +239,15 @@ internal sealed class OpenApiGenerator
         {
             var statusCode = annotation.Key.ToString(CultureInfo.InvariantCulture);
 
-            // TODO: Use the discarded response Type for schema generation
-            var (_, contentTypes) = annotation.Value;
+            var (type, contentTypes) = annotation.Value;
             var responseContent = new Dictionary<string, OpenApiMediaType>();
 
             foreach (var contentType in contentTypes)
             {
-                responseContent[contentType] = new OpenApiMediaType();
+                responseContent[contentType] = new OpenApiMediaType
+                {
+                    Schema = schemaGenerator?.GetSchemaFromType(type)
+                };
             }
 
             responses[statusCode] = new OpenApiResponse
@@ -306,7 +312,7 @@ internal sealed class OpenApiGenerator
         }
     }
 
-    private OpenApiRequestBody? GetOpenApiRequestBody(MethodInfo methodInfo, EndpointMetadataCollection metadata, RoutePattern pattern)
+    private OpenApiRequestBody? GetOpenApiRequestBody(MethodInfo methodInfo, EndpointMetadataCollection metadata, RoutePattern pattern, JsonSchemaGenerator? schemaGenerator)
     {
         var hasFormOrBodyParameter = false;
         ParameterInfo? requestBodyParameter = null;
@@ -330,7 +336,7 @@ internal sealed class OpenApiGenerator
         {
             foreach (var contentType in acceptsMetadata.ContentTypes)
             {
-                requestBodyContent[contentType] = new OpenApiMediaType();
+                requestBodyContent[contentType] = new OpenApiMediaType { Schema = schemaGenerator.GetSchemaFromType(acceptsMetadata.RequestType) };
             }
 
             if (!hasFormOrBodyParameter)
@@ -411,7 +417,7 @@ internal sealed class OpenApiGenerator
         return new List<OpenApiTag>() { new OpenApiTag() { Name = controllerName } };
     }
 
-    private List<OpenApiParameter> GetOpenApiParameters(MethodInfo methodInfo, EndpointMetadataCollection metadata, RoutePattern pattern, bool disableInferredBody)
+    private List<OpenApiParameter> GetOpenApiParameters(MethodInfo methodInfo, EndpointMetadataCollection metadata, RoutePattern pattern, bool disableInferredBody, JsonSchemaGenerator? schemaGenerator)
     {
         var parameters = PropertyAsParameterInfo.Flatten(methodInfo.GetParameters(), ParameterBindingMethodCache);
         var openApiParameters = new List<OpenApiParameter>();
@@ -439,8 +445,8 @@ internal sealed class OpenApiGenerator
             {
                 Name = name,
                 In = parameterLocation,
-                Content = GetOpenApiParameterContent(metadata),
-                Required = !isOptional
+                Required = !isOptional,
+                Schema = schemaGenerator?.GetSchemaFromType(parameter.ParameterType)
 
             };
             openApiParameters.Add(openApiParameter);
@@ -449,7 +455,7 @@ internal sealed class OpenApiGenerator
         return openApiParameters;
     }
 
-    private static Dictionary<string, OpenApiMediaType> GetOpenApiParameterContent(EndpointMetadataCollection metadata)
+    private static Dictionary<string, OpenApiMediaType> GetOpenApiParameterContent(EndpointMetadataCollection metadata, JsonSchemaGenerator? schemaGenerator)
     {
         var openApiParameterContent = new Dictionary<string, OpenApiMediaType>();
         var acceptsMetadata = metadata.GetMetadata<IAcceptsMetadata>();
@@ -457,7 +463,9 @@ internal sealed class OpenApiGenerator
         {
             foreach (var contentType in acceptsMetadata.ContentTypes)
             {
-                openApiParameterContent.Add(contentType, new OpenApiMediaType());
+                openApiParameterContent.Add(contentType, new OpenApiMediaType {
+                    Schema = schemaGenerator.GetSchemaFromType(acceptsMetadata.RequestType)
+                });
             }
         }
 

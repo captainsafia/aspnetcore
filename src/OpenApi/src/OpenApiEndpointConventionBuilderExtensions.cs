@@ -22,36 +22,6 @@ namespace Microsoft.AspNetCore.Builder;
 public static class OpenApiEndpointConventionBuilderExtensions
 {
     /// <summary>
-    /// 
-    /// </summary>
-    /// <param name="builder"></param>
-    /// <returns></returns>
-    public static IEndpointRouteBuilder WithOpenApi(this IEndpointRouteBuilder builder, Func<OpenApiDocument, OpenApiDocument> configureDocument = null)
-    {
-        var applicationServices = builder.ServiceProvider;
-        var hostEnvironment = applicationServices.GetService<IHostEnvironment>();
-        var serviceProviderIsService = applicationServices.GetService<IServiceProviderIsService>();
-        var generator = new OpenApiGenerator(hostEnvironment, serviceProviderIsService);
-        //var document = generator.GetOpenApiDocument(builder.DataSources);
-        //if (configureDocument != null)
-        //{
-        //    document = configureDocument(document);
-        //}
-        return builder;
-    }
-
-    public static IServiceCollection UseOpenApi(this IServiceCollection services)
-    {
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<OpenApiDocument>, OpenApiDocumentConfigureOptions>());
-        return services;
-    }
-
-    public static IApplicationBuilder MapOpenApiDocument(this IApplicationBuilder app)
-    {
-        return app;
-    }
-
-    /// <summary>
     /// Adds an OpenAPI annotation to <see cref="Endpoint.Metadata" /> associated
     /// with the current endpoint.
     /// </summary>
@@ -59,7 +29,7 @@ public static class OpenApiEndpointConventionBuilderExtensions
     /// <returns>A <see cref="IEndpointConventionBuilder"/> that can be used to further customize the endpoint.</returns>
     public static TBuilder WithOpenApi<TBuilder>(this TBuilder builder) where TBuilder : IEndpointConventionBuilder
     {
-        builder.Finally(builder => AddAndConfigureOperationForEndpoint(builder));
+        builder.Finally(builder => AddAndConfigureOperationForEndpoint(builder, operation => operation));
         return builder;
     }
 
@@ -77,8 +47,9 @@ public static class OpenApiEndpointConventionBuilderExtensions
         return builder;
     }
 
-    private static void AddAndConfigureOperationForEndpoint(EndpointBuilder endpointBuilder, Func<OpenApiOperation, OpenApiOperation>? configure = null)
+    private static void AddAndConfigureOperationForEndpoint(EndpointBuilder endpointBuilder, Func<OpenApiOperation, OpenApiOperation> configure)
     {
+        // Make this populate a list in the OpenApiDocumentService that is called
         foreach (var item in endpointBuilder.Metadata)
         {
             if (item is OpenApiOperation existingOperation)
@@ -122,19 +93,34 @@ public static class OpenApiEndpointConventionBuilderExtensions
         var applicationServices = routeEndpointBuilder.ApplicationServices;
         var hostEnvironment = applicationServices.GetService<IHostEnvironment>();
         var serviceProviderIsService = applicationServices.GetService<IServiceProviderIsService>();
+        var openApiDocumentService = applicationServices.GetService<OpenApiDocumentService>();
         var generator = new OpenApiGenerator(hostEnvironment, serviceProviderIsService);
-        var newOperation = generator.GetOpenApiOperation(methodInfo, metadata, pattern);
+        var operation = generator.GetOpenApiOperation(methodInfo, metadata, pattern, openApiDocumentService.SchemaGenerator);
+        var httpMethodMetadata = metadata.GetMetadata<IHttpMethodMetadata>();
+        var method = httpMethodMetadata.HttpMethods.SingleOrDefault();
+        var operationType = method switch
+        {
+            string s when s == HttpMethods.Get => OperationType.Get,
+            string s when s == HttpMethods.Post => OperationType.Post,
+            string s when s == HttpMethods.Put => OperationType.Put,
+            string s when s == HttpMethods.Delete => OperationType.Delete,
+            string s when s == HttpMethods.Head => OperationType.Head,
+            string s when s == HttpMethods.Options => OperationType.Options,
 
-        if (newOperation is not null)
+        };
+
+
+        if (operation is not null)
         {
             if (configure is not null)
             {
-                newOperation = configure(newOperation);
+                operation = configure(operation);
             }
 
-            if (newOperation is not null)
+            if (operation is not null)
             {
-                routeEndpointBuilder.Metadata.Add(newOperation);
+                routeEndpointBuilder.Metadata.Add(operation);
+                openApiDocumentService.PutOperation(pattern.RawText, operationType, operation);
             }
         }
     }
