@@ -14,6 +14,7 @@ using Microsoft.OpenApi.Models;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.Options;
+using System.IO;
 
 namespace Microsoft.AspNetCore.OpenApi;
 public class JsonSchemaGenerator
@@ -118,6 +119,41 @@ public class JsonSchemaGenerator
         if (jsonType.Kind == JsonTypeInfoKind.Object)
         {
             schema.Type = "object";
+            if (jsonType.PolymorphismOptions is not null)
+            {
+                var derivedTypes = jsonType.PolymorphismOptions.DerivedTypes;
+                foreach (var derivedType in derivedTypes)
+                {
+                    if (_document?.Components?.Schemas.TryGetValue(derivedType.DerivedType.Name, out var cSchema) == true)
+                    {
+                        cSchema.AllOf = new List<OpenApiSchema>()
+                        {
+                            new OpenApiSchema { Reference = new OpenApiReference { Type = ReferenceType.Schema, Id = jsonType.Type.Name } }
+                        };
+                        foreach (var property in jsonType.Properties)
+                        {
+                            cSchema.Properties.Remove(property.Name);
+                        }
+                    }
+                    else
+                    {
+                        _document.Components ??= new OpenApiComponents();
+                        var _ = GetSchemaFromType(derivedType.DerivedType);
+                        if (_document?.Components?.Schemas.TryGetValue(derivedType.DerivedType.Name, out var fSchema) == true)
+                        {
+                            fSchema.AllOf = new List<OpenApiSchema>()
+                        {
+                            new OpenApiSchema { Reference = new OpenApiReference { Type = ReferenceType.Schema, Id = jsonType.Type.Name } }
+                        };
+                            foreach (var property in jsonType.Properties)
+                            {
+                                fSchema.Properties.Remove(property.Name);
+                            }
+                            _document.Components.Schemas[derivedType.DerivedType.Name] = fSchema;
+                        }
+                    }
+                }
+            }
             foreach (var property in jsonType.Properties)
             {
                 var innerSchema = GetSchemaFromType(property.PropertyType);
@@ -132,6 +168,16 @@ public class JsonSchemaGenerator
             }
             _document.Components ??= new OpenApiComponents();
             _document.Components.Schemas.Add(jsonType.Type.Name, schema);
+            if (jsonType.PolymorphismOptions is not null)
+            {
+                var oneOf = new List<OpenApiSchema>();
+                oneOf.Add(new OpenApiSchema { Reference = new OpenApiReference { Type = ReferenceType.Schema, Id = jsonType.Type.Name } });
+                foreach (var derivedType in jsonType.PolymorphismOptions.DerivedTypes)
+                {
+                    oneOf.Add(new OpenApiSchema { Reference = new OpenApiReference { Type = ReferenceType.Schema, Id = derivedType.DerivedType.Name } });
+                }
+                return new OpenApiSchema { OneOf = oneOf };
+            }
             return new OpenApiSchema { Reference = new OpenApiReference { Type = ReferenceType.Schema, Id = jsonType.Type.Name } };
         }
         return schema;

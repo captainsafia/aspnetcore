@@ -15,10 +15,11 @@ builder.Services.AddAuthentication(options =>
     options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
     options.DefaultChallengeScheme = GoogleDefaults.AuthenticationScheme;
 }).AddCookie()
-   .AddGoogle(options => {
-    options.ClientId = builder.Configuration["Authentication:Google:ClientId"];
-    options.ClientSecret = builder.Configuration["Authentication:Google:ClientSecret"];
-});
+   .AddGoogle(options =>
+   {
+       options.ClientId = builder.Configuration["Authentication:Google:ClientId"];
+       options.ClientSecret = builder.Configuration["Authentication:Google:ClientSecret"];
+   });
 builder.Services.AddAuthorization();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolver = new DefaultJsonTypeInfoResolver());
 
@@ -55,7 +56,27 @@ app.MapPost("/todo-lists/{id}", (int id, TodoTask todoTask) =>
     lists.Single(list => list.Id == id).Tasks.Add(todoTask);
 });
 
+app.MapPost("/inheritance", (SubType1 foo) => foo);
+app.MapPost("/polymorphism", (BaseType foo) => foo);
+
 app.Run();
 
 record TodoList(int Id, List<TodoTask> Tasks, string owner);
 record TodoTask(int Id, [property:JsonPropertyName("title")] string Tite, bool IsCompleted);
+
+[JsonDerivedType(typeof(SubType1))]
+[JsonDerivedType(typeof(SubType2))]
+class BaseType
+{
+    public string BaseProperty { get; set; }
+}
+
+class SubType1 : BaseType
+{
+    public int Property1 { get; set; }
+}
+
+class SubType2 : BaseType
+{
+    public int Property2 { get; set; }
+}
