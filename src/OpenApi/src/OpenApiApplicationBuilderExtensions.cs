@@ -16,13 +16,31 @@ namespace Microsoft.AspNetCore.OpenApi;
 
 public static class OpenApiApplicationBuilderExtensions
 {
-    public static WebApplicationBuilder UseOpenApi(this WebApplicationBuilder builder)
+
+    public static IServiceCollection AddOpenApiService(this IServiceCollection service, Action<OpenApiDocument>? customizeGlobalDoc = null)
     {
-        builder.Services.TryAddSingleton<OpenApiDocumentService, OpenApiDocumentService>();
-        return builder;
+        service.TryAddSingleton<OpenApiDocumentService>(s =>
+        new OpenApiDocumentService(s.GetRequiredService<IHostEnvironment>(),
+        s.GetRequiredService<IServiceProviderIsService>(), s.GetRequiredService<EndpointDataSource>(), s.GetService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>(),
+        customizeGlobalDoc));
+
+        return service;
     }
 
-    public static WebApplication UseOpenApi(this WebApplication app)
+
+
+    /*
+    public static WebApplication MapSwaggerJson(this WebApplication app)
+    {
+        app.MapGet("/swagger.json", (OpenApiDocumentService openApiDocument) =>
+        {
+            return openApiDocument.GetOpenApiDocuent().SerializeAsJson(OpenApiSpecVersion.OpenApi3_0);
+        }).ExcludeFromDescription();
+        return app;
+    }
+
+    
+    public static WebApplication MapSwaggerUI(this WebApplication app)
     {
         app.MapGet("/swagger.json", (OpenApiDocumentService openApiDocument) =>
         {
@@ -62,6 +80,7 @@ public static class OpenApiApplicationBuilderExtensions
         }).ExcludeFromDescription();
         return app;
     }
+    */
 }
 
 

@@ -154,9 +154,11 @@ public class JsonSchemaGenerator
                     }
                 }
             }
+            int i = 0;
             foreach (var property in jsonType.Properties)
             {
                 var innerSchema = GetSchemaFromType(property.PropertyType);
+                var xml = XmlDocs.GetDocumentation(jsonType.Type.GetProperties()[i]);
                 var defaultValueAttribute = property.AttributeProvider.GetCustomAttributes(true).OfType<DefaultValueAttribute>().FirstOrDefault();
                 if (defaultValueAttribute != null)
                 {
@@ -164,7 +166,10 @@ public class JsonSchemaGenerator
                 }
                 innerSchema.ReadOnly = property.Set is null;
                 innerSchema.WriteOnly = property.Get is null;
+                innerSchema.Description = xml?.GetElementsByTagName("summary")?.Item(0).LastChild.Value.Trim();
+
                 schema.Properties.Add(property.Name, innerSchema);
+                i++;
             }
             _document.Components ??= new OpenApiComponents();
             _document.Components.Schemas.Add(jsonType.Type.Name, schema);

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Mvc;
@@ -123,7 +124,8 @@ internal sealed class OpenApiGenerator
             Tags = GetOperationTags(methodInfo, metadata),
             Parameters = GetOpenApiParameters(methodInfo, metadata, pattern, disableInferredBody, schemaGenerator),
             RequestBody = GetOpenApiRequestBody(methodInfo, metadata, pattern, schemaGenerator),
-            Responses = GetOpenApiResponses(methodInfo, metadata, schemaGenerator)
+            Responses = GetOpenApiResponses(methodInfo, metadata, schemaGenerator),
+            Security = GetOpenApiSecurity(methodInfo, metadata)
         };
 
         static bool ShouldDisableInferredBody(string method)
@@ -136,6 +138,48 @@ internal sealed class OpenApiGenerator
                    method.Equals(HttpMethods.Trace, StringComparison.Ordinal) ||
                    method.Equals(HttpMethods.Connect, StringComparison.Ordinal);
         }
+    }
+
+    private static List<OpenApiSecurityRequirement> GetOpenApiSecurity(MethodInfo method, EndpointMetadataCollection metadata)
+    {
+        var security = new List<OpenApiSecurityRequirement>();
+        foreach (var authorize in metadata.OfType<IAuthorizeData>())
+        {
+            //foreach (var schemeName in authorize.AuthenticationSchemes?.Split(','))
+            //{
+            //    var scheme2 = new OpenApiSecurityScheme()
+            //    {
+            //        Type = SecuritySchemeType.Http,
+            //        Name = schemeName,
+            //        Scheme = schemeName,
+            //        Reference = new()
+            //        {
+            //            Type = ReferenceType.SecurityScheme,
+            //            Id = schemeName
+            //        }
+            //    };
+            //    security.Add(new()
+            //    {
+            //        [scheme2] = new List<string>()
+            //    });
+            //}
+            var scheme3 = new OpenApiSecurityScheme()
+            {
+                Type = SecuritySchemeType.Http,
+                Name = $"{method.Name}Auth",
+                Scheme = "Google", // Get actual default option
+                Reference = new()
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Google"
+                }
+            };
+            security.Add(new()
+            {
+                [scheme3] = new List<string>()
+            });
+        }
+        return security;
     }
 
     private static OpenApiResponses GetOpenApiResponses(MethodInfo method, EndpointMetadataCollection metadata, JsonSchemaGenerator? schemaGenerator)

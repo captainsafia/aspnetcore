@@ -8,6 +8,8 @@ using Microsoft.Extensions.Options;
 
 namespace Microsoft.AspNetCore.Authentication;
 
+public delegate IOptionsMonitor<AuthenticationSchemeOptions> AuthenticationOptionsByScheme(string key);
+
 /// <summary>
 /// Used to configure authentication
 /// </summary>
@@ -50,6 +52,14 @@ public class AuthenticationBuilder
             return true;
         });
         Services.AddTransient<THandler>();
+        Services.AddTransient<AuthenticationOptionsByScheme>(sp => key =>
+        {
+            if (key == authenticationScheme)
+            {
+                return sp.GetService<IOptionsMonitor<TOptions>>();
+            }
+            return null;
+        });
         return this;
     }
 
